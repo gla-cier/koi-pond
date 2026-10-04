@@ -33,7 +33,7 @@ const COL = {
   pad: 0x4caf5a,
   padDark: 0x3a8f48,
   flower: 0xf4a3b8,
-  stroke: 0x6e6e6e, // dark grey cut where black meets the water on a showa
+  stroke: 0x8a8a8a, // the one-dot stroke where a black mark meets the water
 }
 const NONE = -1
 // Quadrant glyph by mask: 1 upper-left, 2 upper-right, 4 lower-left, 8 lower-right.
@@ -67,6 +67,7 @@ type Drawn = { dir: 1 | -1; hx: number; hy: number; shape: Shape; pattern: Patte
 let rows = 6
 let sound = true
 let blocks = false // fish as solid quadrant blocks over braille water
+let waterDots = false // the sparse dot field; off, the pond is the terminal's own background
 let phase: Phase = 'idle'
 let frame = 0
 let happyUntil = 0
@@ -85,6 +86,7 @@ let edg = new Uint8Array(0) // per dot: 1 where a koi's silhouette edge is
 export const register: Register = (on, options) => {
   sound = options?.sound !== false
   blocks = options?.fish === 'blocks'
+  waterDots = options?.water === 'dots'
   const wanted = Number(options?.rows)
   rows = Number.isFinite(wanted) ? Math.max(MIN_ROWS, Math.min(MAX_ROWS, Math.round(wanted))) : 6
 
@@ -265,8 +267,10 @@ function scene(): Int32Array {
   own = new Int16Array(W * H)
   edg = new Uint8Array(W * H)
   drawn = []
-  for (let y = 0; y < H; y += 4) {
-    for (let x = 0; x < W; x += 4) buf[y * W + x] = COL.water
+  if (waterDots) {
+    for (let y = 0; y < H; y += 4) {
+      for (let x = 0; x < W; x += 4) buf[y * W + x] = COL.water
+    }
   }
   for (const r of ripples) {
     const age = frame - r.t0
@@ -347,7 +351,7 @@ function koiShape(L: number, Hh: number, wag: number, seed: number, pattern: Pat
   const bodyL = L * 0.7
   const base = pattern === 'showa' ? COL.orange : COL.white // showa: orange body, black spots
   const cut = (y: number) => bodyL - 1 + 0.45 * y // the slanted separator
-  type Kind = 'body' | 'tail' | 'fin' | 'patch' | 'eye' | 'halo'
+  type Kind = 'body' | 'tail' | 'fin' | 'patch' | 'eye' | 'halo' | 'hole' | 'stroke'
   const kinds = new Map<string, { x: number; y: number; kind: Kind; col: number }>()
   const put = (x: number, y: number, kind: Kind, col: number, keep = false) => {
     const k = `${x},${y}`
@@ -381,7 +385,8 @@ function koiShape(L: number, Hh: number, wag: number, seed: number, pattern: Pat
       for (let x = fx + 1 + i; x < fx + 4 + i; x += 1) put(x, y, 'fin', base, true)
     }
   }
-  const isBody = (x: number, y: number) => kinds.get(`${x},${y}`)?.kind === 'body' || kinds.get(`${x},${y}`)?.kind === 'patch'
+  const INSIDE = new Set<Kind>(['body', 'patch', 'hole', 'stroke'])
+  const isBody = (x: number, y: number) => INSIDE.has(kinds.get(`${x},${y}`)?.kind as Kind)
   const isEdge = (x: number, y: number) => !isBody(x + 1, y) || !isBody(x - 1, y) || !isBody(x, y + 1) || !isBody(x, y - 1)
   const r = mulberry32(seed)
   const deepEdge = (x: number, y: number) => isEdge(x, y) || isEdge(x + 1, y) || isEdge(x - 1, y) || isEdge(x, y + 1) || isEdge(x, y - 1)
@@ -422,6 +427,18 @@ function koiShape(L: number, Hh: number, wag: number, seed: number, pattern: Pat
     })
     if (touching) d.kind = 'halo'
   }
+  // black marks are negative space (unlit dots): exact to the dot, no colour to
+  // vote on. Where one reaches the silhouette, that dot is lit grey instead, so
+  // the fish keeps its edge against the water with a stroke one dot wide.
+  for (const d of kinds.values()) {
+    if (d.kind !== 'patch' || d.col !== COL.black) continue
+    if (isEdge(d.x, d.y)) {
+      d.kind = 'stroke'
+      d.col = COL.stroke
+    } else {
+      d.kind = 'hole'
+    }
+  }
   const ex = Math.round(bodyL * 0.09)
   for (const x of [ex, ex + 1]) {
     const d = kinds.get(`${x},-1`)
@@ -430,7 +447,7 @@ function koiShape(L: number, Hh: number, wag: number, seed: number, pattern: Pat
   const dots: Dot[] = []
   for (const d of kinds.values()) {
     const silhouette = d.kind === 'tail' || d.kind === 'fin' || isEdge(d.x, d.y)
-    dots.push({ x: d.x, y: d.y, lit: d.kind !== 'eye' && d.kind !== 'halo', col: d.col, edge: silhouette })
+    dots.push({ x: d.x, y: d.y, lit: d.kind !== 'eye' && d.kind !== 'halo' && d.kind !== 'hole', col: d.col, edge: silhouette })
   }
   const shape: Shape = { dots, marks, base }
   if (shapeCache.size > 256) shapeCache.clear()
@@ -453,6 +470,7 @@ function cellsFor(): string {
       let bits = 0
       let fishBits = 0
       let top = 0 // the koi on top in this cell, 0 for none
+      let stroke = false
       let edge = false
       const counts = new Map<number, number>()
       ORDER.forEach(([dx, dy], k) => {
@@ -466,6 +484,7 @@ function cellsFor(): string {
           const o = own[at] ?? 0
           if (o > top) { top = o; edge = false }
           if (o === top && o > 0 && edg[at]) edge = true
+          if (c === COL.stroke) stroke = true
         }
       })
       let col = DEFAULT
@@ -482,9 +501,10 @@ function cellsFor(): string {
           const ly = cyDot - d.hy
           col = d.shape.base
           for (const m of d.shape.marks) {
+            if (m.col === COL.black) continue // unlit: nothing to colour
             if (((lx - m.cx) / m.rx) ** 2 + ((ly - m.cy) / m.ry) ** 2 <= 1) col = m.col
           }
-          if (col === COL.black && edge) col = COL.stroke // black meets the water here: a grey cut keeps the silhouette
+          if (stroke) col = COL.stroke // the grey edge where a black mark meets the water
           else if (d.pattern === 'sanke' && edge && col !== d.shape.base) col = d.shape.base // the sanke's rim stays white
         } else {
           col = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]![0]
