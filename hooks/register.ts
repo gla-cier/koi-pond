@@ -195,7 +195,7 @@ function resize(next: number) {
   }
   // two big koi on their own lanes, small ones along the top and bottom, a medium one mid-water
   const patterns: Pattern[] = ['kohaku', 'showa', 'tancho', 'sanke', 'kohaku', 'showa']
-  const sizes: [number, number][] = [[36, 9], [34, 9], [18, 4], [16, 4], [24, 5], [20, 5]]
+  const sizes: [number, number][] = [[38, 10], [36, 10], [18, 4], [16, 4], [24, 5], [20, 5]]
   const lanes = [0.3, 0.72, 0.1, 0.92, 0.5, 0.2]
   while (fish.length < want) {
     const i = fish.length
@@ -459,24 +459,33 @@ function cellsFor(): string {
       let bits = 0
       let fishBits = 0
       let blackBits = 0
-      let top = 0 // the koi on top in this cell, 0 for none
+      let top = 0 // who is on top in this cell: 0 none, 1 + fish index, PAD for a lily pad
       let stroke = false
       let edge = false
+      const PAD = 1 << 20
       const counts = new Map<number, number>()
+      const rank = (at: number, c: number) => (c === COL.pad || c === COL.padDark || c === COL.flower ? PAD : (own[at] ?? 0))
+      // first pass: who is on top here
+      ORDER.forEach(([dx, dy]) => {
+        const at = (cy * 4 + dy) * W + cx * 2 + dx
+        const c = buf[at] ?? NONE
+        if (c === NONE || c === COL.water || c === COL.ripple) return
+        top = Math.max(top, rank(at, c))
+      })
+      // second pass: only the top one's dots are drawn, so a koi in front hides
+      // the one behind cleanly instead of recolouring its dots
       ORDER.forEach(([dx, dy], k) => {
         const at = (cy * 4 + dy) * W + cx * 2 + dx
         const c = buf[at] ?? NONE
         if (c === NONE) return
+        if (c === COL.water || c === COL.ripple) { bits |= 1 << k; return }
+        if (rank(at, c) !== top) return
         bits |= 1 << k
-        if (c !== COL.water && c !== COL.ripple) {
-          fishBits |= 1 << k
-          if (c === COL.black) blackBits |= 1 << k
-          counts.set(c, (counts.get(c) ?? 0) + 1)
-          const o = own[at] ?? 0
-          if (o > top) { top = o; edge = false }
-          if (o === top && o > 0 && edg[at]) edge = true
-          if (c === COL.stroke) stroke = true
-        }
+        fishBits |= 1 << k
+        if (c === COL.black) blackBits |= 1 << k
+        counts.set(c, (counts.get(c) ?? 0) + 1)
+        if (top < PAD && edg[at]) edge = true
+        if (c === COL.stroke) stroke = true
       })
       let col = DEFAULT
       if (counts.size > 0) {
@@ -485,7 +494,7 @@ function cellsFor(): string {
         // stands alone; everywhere else black is a solid fill and the cell takes
         // whichever colour the pattern has at its centre
         if (stroke) bits &= ~blackBits
-        if (top > 0) {
+        if (top > 0 && top < PAD) {
           // one colour per cell: read the koi's pattern at the cell's centre, so a
           // marking is a steady shape that travels with the fish instead of a
           // count of dots that flips as the fish crosses cell boundaries
