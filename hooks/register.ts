@@ -36,6 +36,8 @@ const COL = {
   stroke: 0xb8c0c8, // where black meets the water on a showa
 }
 const NONE = -1
+// Quadrant glyph by mask: 1 upper-left, 2 upper-right, 4 lower-left, 8 lower-right.
+const QUADRANT = [0x20, 0x2598, 0x259d, 0x2580, 0x2596, 0x258c, 0x259e, 0x259b, 0x2597, 0x259a, 0x2590, 0x259c, 0x2584, 0x2599, 0x259f, 0x2588]
 
 type Phase = 'idle' | 'working' | 'happy'
 type Pattern = 'kohaku' | 'tancho' | 'sanke' | 'showa'
@@ -59,6 +61,7 @@ type Dot = { x: number; y: number; lit: boolean; col: number }
 
 let rows = 6
 let sound = true
+let blocks = false // fish as solid quadrant blocks over braille water
 let phase: Phase = 'idle'
 let frame = 0
 let happyUntil = 0
@@ -73,6 +76,7 @@ let rnd = mulberry32(0x9e3779b9)
 
 export const register: Register = (on, options) => {
   sound = options?.sound !== false
+  blocks = options?.fish === 'blocks'
   const wanted = Number(options?.rows)
   rows = Number.isFinite(wanted) ? Math.max(MIN_ROWS, Math.min(MAX_ROWS, Math.round(wanted))) : 6
 
@@ -174,28 +178,30 @@ function resize(next: number) {
   cols = next
   const W = cols * 2
   const H = rows * 4
-  const want = Math.max(2, Math.min(7, Math.round(cols / 16)))
+  const want = Math.max(2, Math.min(6, Math.round(cols / 22)))
   if (prev > 0 && fish.length > 0) {
     const ratio = W / (prev * 2)
     for (const f of fish) f.x = Math.min(W - 2, Math.max(1, f.x * ratio))
   }
-  const patterns: Pattern[] = ['kohaku', 'showa', 'tancho', 'sanke', 'kohaku', 'showa', 'tancho']
-  const sizes: [number, number][] = [[36, 9], [38, 9], [26, 6], [18, 4], [16, 4], [30, 7], [20, 5]]
+  // two big koi on their own lanes, small ones along the top and bottom, a medium one mid-water
+  const patterns: Pattern[] = ['kohaku', 'showa', 'tancho', 'sanke', 'kohaku', 'showa']
+  const sizes: [number, number][] = [[36, 9], [34, 8], [18, 4], [16, 4], [24, 5], [20, 5]]
+  const lanes = [0.3, 0.72, 0.1, 0.92, 0.5, 0.2]
   while (fish.length < want) {
     const i = fish.length
     const [L, Hh] = sizes[i % sizes.length] ?? [24, 6]
     const dir: 1 | -1 = i % 2 === 0 ? -1 : 1
-    const lane = (i + 0.5) / want
+    const lane = lanes[i % lanes.length] ?? 0.5
     fish.push({
-      x: Math.floor(W * ((i + 0.5) / want)),
-      yBase: Math.max(Hh / 2 + 2, Math.min(H - Hh / 2 - 2, 3 + lane * (H - 6))),
+      x: Math.floor(W * ((i * 0.37 + 0.2) % 1)),
+      yBase: Math.max(Hh / 2 + 1, Math.min(H - Hh / 2 - 1, lane * H)),
       L, Hh, dir,
       speed: 0.3 + rnd() * 0.3,
       phase: rnd() * Math.PI * 2,
       seed: 1 + Math.floor(rnd() * 1000),
       pattern: patterns[i % patterns.length] ?? 'kohaku',
       wave: 0.05 + rnd() * 0.05,
-      amp: 1.5 + rnd() * 1.5,
+      amp: Hh > 6 ? 0.8 + rnd() * 0.7 : 1.2 + rnd() * 1.2,
       turning: 0,
     })
   }
@@ -233,7 +239,8 @@ function step() {
     if (nearEdge || rnd() < turnChance) {
       f.turning = 6
     }
-    const homeY = Math.max(f.Hh / 2 + 2, Math.min(H - f.Hh / 2 - 2, 3 + (fish.indexOf(f) + 0.5) / fish.length * (H - 6)))
+    const lanes = [0.3, 0.72, 0.1, 0.92, 0.5, 0.2]
+    const homeY = Math.max(f.Hh / 2 + 1, Math.min(H - f.Hh / 2 - 1, (lanes[fish.indexOf(f) % lanes.length] ?? 0.5) * H))
     if (Math.abs(f.yBase - homeY) > 0.1) f.yBase += (homeY - f.yBase) * 0.02
   }
   ripples = ripples.filter(r => frame - r.t0 < 9)
@@ -445,7 +452,13 @@ function cellsFor(): string {
       } else if (bits) {
         col = (bits & ~waterMask(buf, W, cx, cy)) ? COL.ripple : COL.water
       }
-      words[i++] = bits ? 0x2800 + bits : 0x20
+      if (blocks && counts.size > 0) {
+        // a koi cell as a 2x2 block: each quadrant lit when either of its two dots is
+        const q = (fishBits & 0b000011 ? 1 : 0) | (fishBits & 0b011000 ? 2 : 0) | (fishBits & 0b1000100 ? 4 : 0) | (fishBits & 0b10100000 ? 8 : 0)
+        words[i++] = QUADRANT[q] ?? 0x20
+      } else {
+        words[i++] = bits ? 0x2800 + bits : 0x20
+      }
       words[i++] = col
       words[i++] = DEFAULT
     }

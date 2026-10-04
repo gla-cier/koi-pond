@@ -1,6 +1,6 @@
 {
   "name": "koi-pond",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "A braille koi pond across the band above the prompt: koi drift and fishtail while you type, dart while Claude works, settle to the bottom as the context window fills, and a ripple (with a bloop) marks each finished turn.",
   "author": {
     "name": "glacier"
@@ -17,6 +17,16 @@
       "description": "Height of the pond in terminal rows (4 to 8).",
       "default": 6,
       "title": "Pond height (rows)"
+    },
+    "fish": {
+      "type": "string",
+      "title": "Koi drawing",
+      "description": "dots: braille stipple (finer). blocks: solid quadrant blocks over braille water (bolder).",
+      "options": [
+        "dots",
+        "blocks"
+      ],
+      "default": "dots"
     }
   }
 }

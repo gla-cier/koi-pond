@@ -66,3 +66,16 @@ test('the rows option sets the pond height', { options: { rows: 4 } }, async ($,
   expect((pond as any).props.rows).toBe(4)
   await ui.unmount()
 })
+
+test('the fish option switches the koi to block glyphs', { options: { fish: 'blocks' } }, async ($, on) => {
+  on('ui.render', { component: 'AbovePrompt' }, emptyBand)
+  const ui = await $.ui.mount({ plugin: 'koi-pond', surface: 'terminal', ...band({}) })
+  const pond = await ui.find({ type: 'Raster', key: 'pond' } as any)
+  expect(pond).toBeDefined()
+  const bytes = Uint8Array.from(atob((pond as any).props.cells), (c: string) => c.charCodeAt(0))
+  const words = new Uint32Array(bytes.buffer)
+  let block = 0
+  for (let k = 0; k < words.length; k += 3) if (words[k]! >= 0x2580 && words[k]! <= 0x259f) block += 1
+  expect(block > 0).toBe(true)
+  await ui.unmount()
+})
