@@ -33,7 +33,7 @@ const COL = {
   pad: 0x4caf5a,
   padDark: 0x3a8f48,
   flower: 0xf4a3b8,
-  stroke: 0x7c7c7c, // the one-dot stroke where a black mark meets the water
+  stroke: 0x6e6e6e, // the cell where a black mark meets the water: a dark grey edge, every dot lit
 }
 const NONE = -1
 // Quadrant glyph by mask: 1 upper-left, 2 upper-right, 4 lower-left, 8 lower-right.
@@ -485,7 +485,6 @@ function cellsFor(): string {
     for (let cx = 0; cx < cols; cx += 1) {
       let bits = 0
       let fishBits = 0
-      let blackBits = 0
       let top = 0 // who is on top in this cell: 0 none or a lily pad, else 1 + fish index
       let stroke = false
       let edge = false
@@ -509,7 +508,6 @@ function cellsFor(): string {
         if (rank(at, c) !== top) return
         bits |= 1 << k
         fishBits |= 1 << k
-        if (c === COL.black) blackBits |= 1 << k
         counts.set(c, (counts.get(c) ?? 0) + 1)
         if (top < PAD && edg[at]) edge = true
         if (c === COL.stroke) stroke = true
@@ -520,7 +518,6 @@ function cellsFor(): string {
         // in a waterline cell the black dots go unlit so the one-dot grey stroke
         // stands alone; everywhere else black is a solid fill and the cell takes
         // whichever colour the pattern has at its centre
-        if (stroke) bits &= ~blackBits
         if (top > 0 && top < PAD) {
           // one colour per cell: read the koi's pattern at the cell's centre, so a
           // marking is a steady shape that travels with the fish instead of a
