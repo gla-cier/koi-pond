@@ -29,11 +29,11 @@ const COL = {
   ripple: 0x5c93ad,
   white: 0xf6f1e7,
   orange: 0xf07c2a,
-  black: 0x3a3a3a, // lit black: a shade above dark themes so the mark has texture
+  black: 0x505050, // the black marks: a dark grey fill that reads on dark themes
   pad: 0x4caf5a,
   padDark: 0x3a8f48,
   flower: 0xf4a3b8,
-  stroke: 0x646464, // the one-dot stroke where a black mark meets the water
+  stroke: 0x7c7c7c, // the one-dot stroke where a black mark meets the water
 }
 const NONE = -1
 // Quadrant glyph by mask: 1 upper-left, 2 upper-right, 4 lower-left, 8 lower-right.
@@ -340,7 +340,7 @@ function lily(buf: Int32Array, W: number, H: number, cx: number, cy: number, r: 
 
 // A koi facing left, head at the origin, body along +x. Dots carry a colour and
 // whether they are lit; unlit dots are the eye, the slanted gap before the tail,
-// the one-dot halo around each marking: they clear what is beneath them.
+// nothing else: they clear what is beneath them.
 const shapeCache = new Map<string, Shape>()
 
 function koiShape(L: number, Hh: number, wag: number, seed: number, pattern: Pattern): Shape {
@@ -374,14 +374,14 @@ function koiShape(L: number, Hh: number, wag: number, seed: number, pattern: Pat
     for (const lobe of [-1, 1]) {
       const yc = lobe * spread * 0.85 + bend
       for (let y = Math.floor(yc - 0.5); y <= Math.ceil(yc + 0.5); y += 1) {
-        if (x >= cut(y) + 2) put(x, y, 'tail', base, true)
+        if (x >= Math.floor(cut(y)) + 2) put(x, y, 'tail', base, true) // exactly one unlit dot behind the body
       }
     }
   }
   const fx = Math.floor(bodyL * 0.3)
   for (const lobe of [-1, 1]) {
     for (let i = 0; i < 2; i += 1) {
-      const y = lobe * (Math.round(half) + 1 + i)
+      const y = lobe * (Math.round(half) + i) // fins attached to the flank
       for (let x = fx + 1 + i; x < fx + 4 + i; x += 1) put(x, y, 'fin', base, true)
     }
   }
@@ -418,14 +418,6 @@ function koiShape(L: number, Hh: number, wag: number, seed: number, pattern: Pat
       d.kind = 'patch'
       d.col = m.col
     }
-  }
-  for (const d of kinds.values()) {
-    if (d.kind !== 'body' || isEdge(d.x, d.y)) continue
-    const touching = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([a, b]) => {
-      const n = kinds.get(`${d.x + a!},${d.y + b!}`)
-      return n?.kind === 'patch' && n.col !== COL.black // no halo around black: it would only widen the spot
-    })
-    if (touching) d.kind = 'halo'
   }
   // where a black mark reaches the silhouette, that dot is a grey stroke one
   // dot wide; the rest of the mark is lit black (cellsFor keeps it to cells of
@@ -489,14 +481,11 @@ function cellsFor(): string {
       let col = DEFAULT
       if (counts.size > 0) {
         bits = fishBits // water dots do not show through a koi's cell
-        // black lights only cells that are wholly black; where it shares a cell
-        // with the body or the stroke it goes unlit, a one-dot rim, so no cell
-        // ever has to choose between black and another colour
-        const wholly = blackBits !== 0 && blackBits === fishBits
-        if (!wholly) bits &= ~blackBits
-        if (wholly) {
-          col = COL.black
-        } else if (top > 0) {
+        // in a waterline cell the black dots go unlit so the one-dot grey stroke
+        // stands alone; everywhere else black is a solid fill and the cell takes
+        // whichever colour the pattern has at its centre
+        if (stroke) bits &= ~blackBits
+        if (top > 0) {
           // one colour per cell: read the koi's pattern at the cell's centre, so a
           // marking is a steady shape that travels with the fish instead of a
           // count of dots that flips as the fish crosses cell boundaries
@@ -507,13 +496,12 @@ function cellsFor(): string {
           const ly = cyDot - d.hy
           col = d.shape.base
           for (const m of d.shape.marks) {
-            if (m.col === COL.black) continue // unlit: nothing to colour
             if (((lx - m.cx) / m.rx) ** 2 + ((ly - m.cy) / m.ry) ** 2 <= 1) col = m.col
           }
           if (stroke) col = COL.stroke // the grey edge where a black mark meets the water
           else if (d.pattern === 'sanke' && edge && col !== d.shape.base) col = d.shape.base // the sanke's rim stays white
         } else {
-          col = [...counts.entries()].filter(([c]) => c !== COL.black).sort((a, b) => b[1] - a[1])[0]?.[0] ?? COL.black
+          col = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]![0]
         }
       } else if (bits) {
         col = (bits & ~waterMask(buf, W, cx, cy)) ? COL.ripple : COL.water
