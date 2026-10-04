@@ -289,13 +289,20 @@ function scene(): Int32Array {
       if (x >= 0 && x < W && y >= 0 && y < H && buf[y * W + x] === NONE) buf[y * W + x] = COL.ripple
     }
   }
+  // lily pads first: with the band this shallow a pad over a koi reads as a bite
+  // out of the fish, so the koi pass over the pads
+  lily(buf, W, H, W - 14, 5, 4, true)
+  lily(buf, W, H, 9, 3, 2, false)
+  if (W > 110) lily(buf, W, H, Math.floor(W * 0.45), H - 4, 4, true)
+  if (W > 200) lily(buf, W, H, Math.floor(W * 0.62), 4, 3, false)
   const factor = speedFactor()
   // z-order: smaller koi are drawn first, so a bigger fish always passes over a smaller one
   for (const f of [...fish].sort((a, b) => a.L - b.L)) {
     const progress = f.turning > 0 ? (6 - f.turning) / 6 : 0
     const squeeze = f.turning > 0 ? Math.max(0.3, Math.abs(Math.cos(progress * Math.PI))) : 1
     const wag = factor === 0 ? 0 : 0.7 * Math.sin(frame * (0.5 + f.speed * 1.5) + f.phase) * Math.min(1, factor)
-    const shape = koiShape(Math.max(8, Math.round(f.L * squeeze)), f.Hh, wag, f.seed, f.pattern)
+    const full = koiShape(f.L, f.Hh, wag, f.seed, f.pattern)
+    const shape = squeeze < 1 ? foreshorten(full, squeeze, f.L, f.Hh) : full // a turn: a solid oval, shrinking then growing back
     const hx = Math.round(f.x)
     const hy = Math.round(fishY(f))
     drawn.push({ dir: f.dir, hx, hy, shape, pattern: f.pattern })
@@ -310,11 +317,6 @@ function scene(): Int32Array {
       edg[k] = d.lit && d.edge ? 1 : 0
     }
   }
-  // lily pads on top: the koi pass under them (the bottom right is the caption's)
-  lily(buf, W, H, W - 14, 5, 4, true)
-  lily(buf, W, H, 9, 3, 2, false)
-  if (W > 110) lily(buf, W, H, Math.floor(W * 0.45), H - 4, 4, true)
-  if (W > 200) lily(buf, W, H, Math.floor(W * 0.62), 4, 3, false)
   return buf
 }
 
@@ -344,6 +346,23 @@ function lily(buf: Int32Array, W: number, H: number, cx: number, cy: number, r: 
       }
     }
   }
+}
+
+// A turning koi, seen nearly end-on: a filled oval in the fish's colours, no
+// tail, fins or eye, that shrinks through the turn and grows back out.
+function foreshorten(shape: Shape, s: number, L: number, Hh: number): Shape {
+  const half = Hh / 2
+  const len = Math.max(4, L * 0.7 * s)
+  const dots: Dot[] = []
+  const inside = (x: number, y: number) => ((x - len / 2) / (len / 2)) ** 2 + (y / half) ** 2 <= 1
+  for (let x = 0; x <= Math.ceil(len); x += 1) {
+    for (let y = -Math.ceil(half); y <= Math.ceil(half); y += 1) {
+      if (!inside(x, y)) continue
+      const edge = !inside(x + 1, y) || !inside(x - 1, y) || !inside(x, y + 1) || !inside(x, y - 1)
+      dots.push({ x, y, lit: true, col: shape.base, edge })
+    }
+  }
+  return { dots, base: shape.base, marks: shape.marks.map(m => ({ ...m, cx: m.cx * s, rx: Math.max(1, m.rx * s) })) }
 }
 
 // A koi facing left, head at the origin, body along +x. Dots carry a colour and
@@ -467,12 +486,12 @@ function cellsFor(): string {
       let bits = 0
       let fishBits = 0
       let blackBits = 0
-      let top = 0 // who is on top in this cell: 0 none, 1 + fish index, PAD for a lily pad
+      let top = 0 // who is on top in this cell: 0 none or a lily pad, else 1 + fish index
       let stroke = false
       let edge = false
       const PAD = 1 << 20
       const counts = new Map<number, number>()
-      const rank = (at: number, c: number) => (c === COL.pad || c === COL.padDark || c === COL.flower ? PAD : (own[at] ?? 0))
+      const rank = (at: number, c: number) => (c === COL.pad || c === COL.padDark || c === COL.flower ? 0 : (own[at] ?? 0)) // pads beneath fish
       // first pass: who is on top here
       ORDER.forEach(([dx, dy]) => {
         const at = (cy * 4 + dy) * W + cx * 2 + dx
