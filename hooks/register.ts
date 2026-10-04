@@ -29,11 +29,11 @@ const COL = {
   ripple: 0x5c93ad,
   white: 0xf6f1e7,
   orange: 0xf07c2a,
-  black: 0x303030, // a shade above the usual dark theme so the mark itself shows
+  black: 0x3a3a3a, // lit black: a shade above dark themes so the mark has texture
   pad: 0x4caf5a,
   padDark: 0x3a8f48,
   flower: 0xf4a3b8,
-  stroke: 0x8a8a8a, // the one-dot stroke where a black mark meets the water
+  stroke: 0x646464, // the one-dot stroke where a black mark meets the water
 }
 const NONE = -1
 // Quadrant glyph by mask: 1 upper-left, 2 upper-right, 4 lower-left, 8 lower-right.
@@ -427,16 +427,13 @@ function koiShape(L: number, Hh: number, wag: number, seed: number, pattern: Pat
     })
     if (touching) d.kind = 'halo'
   }
-  // black marks are negative space (unlit dots): exact to the dot, no colour to
-  // vote on. Where one reaches the silhouette, that dot is lit grey instead, so
-  // the fish keeps its edge against the water with a stroke one dot wide.
+  // where a black mark reaches the silhouette, that dot is a grey stroke one
+  // dot wide; the rest of the mark is lit black (cellsFor keeps it to cells of
+  // its own, so the stroke and the body never share a cell with black)
   for (const d of kinds.values()) {
-    if (d.kind !== 'patch' || d.col !== COL.black) continue
-    if (isEdge(d.x, d.y)) {
+    if (d.kind === 'patch' && d.col === COL.black && isEdge(d.x, d.y)) {
       d.kind = 'stroke'
       d.col = COL.stroke
-    } else {
-      d.kind = 'hole'
     }
   }
   const ex = Math.round(bodyL * 0.09)
@@ -469,6 +466,7 @@ function cellsFor(): string {
     for (let cx = 0; cx < cols; cx += 1) {
       let bits = 0
       let fishBits = 0
+      let blackBits = 0
       let top = 0 // the koi on top in this cell, 0 for none
       let stroke = false
       let edge = false
@@ -480,6 +478,7 @@ function cellsFor(): string {
         bits |= 1 << k
         if (c !== COL.water && c !== COL.ripple) {
           fishBits |= 1 << k
+          if (c === COL.black) blackBits |= 1 << k
           counts.set(c, (counts.get(c) ?? 0) + 1)
           const o = own[at] ?? 0
           if (o > top) { top = o; edge = false }
@@ -490,7 +489,14 @@ function cellsFor(): string {
       let col = DEFAULT
       if (counts.size > 0) {
         bits = fishBits // water dots do not show through a koi's cell
-        if (top > 0) {
+        // black lights only cells that are wholly black; where it shares a cell
+        // with the body or the stroke it goes unlit, a one-dot rim, so no cell
+        // ever has to choose between black and another colour
+        const wholly = blackBits !== 0 && blackBits === fishBits
+        if (!wholly) bits &= ~blackBits
+        if (wholly) {
+          col = COL.black
+        } else if (top > 0) {
           // one colour per cell: read the koi's pattern at the cell's centre, so a
           // marking is a steady shape that travels with the fish instead of a
           // count of dots that flips as the fish crosses cell boundaries
@@ -507,14 +513,14 @@ function cellsFor(): string {
           if (stroke) col = COL.stroke // the grey edge where a black mark meets the water
           else if (d.pattern === 'sanke' && edge && col !== d.shape.base) col = d.shape.base // the sanke's rim stays white
         } else {
-          col = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]![0]
+          col = [...counts.entries()].filter(([c]) => c !== COL.black).sort((a, b) => b[1] - a[1])[0]?.[0] ?? COL.black
         }
       } else if (bits) {
         col = (bits & ~waterMask(buf, W, cx, cy)) ? COL.ripple : COL.water
       }
       if (blocks && counts.size > 0) {
         // a koi cell as a 2x2 block: each quadrant lit when either of its two dots is
-        const q = (fishBits & 0b000011 ? 1 : 0) | (fishBits & 0b011000 ? 2 : 0) | (fishBits & 0b1000100 ? 4 : 0) | (fishBits & 0b10100000 ? 8 : 0)
+        const q = (bits & 0b000011 ? 1 : 0) | (bits & 0b011000 ? 2 : 0) | (bits & 0b1000100 ? 4 : 0) | (bits & 0b10100000 ? 8 : 0)
         words[i++] = QUADRANT[q] ?? 0x20
       } else {
         words[i++] = bits ? 0x2800 + bits : 0x20
