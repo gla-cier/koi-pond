@@ -29,11 +29,11 @@ const COL = {
   ripple: 0x5c93ad,
   white: 0xf6f1e7,
   orange: 0xf07c2a,
-  black: 0x262626,
+  black: 0x303030, // a shade above the usual dark theme so the mark itself shows
   pad: 0x4caf5a,
   padDark: 0x3a8f48,
   flower: 0xf4a3b8,
-  stroke: 0xb8c0c8, // where black meets the water on a showa
+  stroke: 0x6e6e6e, // dark grey cut where black meets the water on a showa
 }
 const NONE = -1
 // Quadrant glyph by mask: 1 upper-left, 2 upper-right, 4 lower-left, 8 lower-right.
