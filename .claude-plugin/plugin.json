@@ -1,6 +1,6 @@
 {
   "name": "koi-pond",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "A braille koi pond across the band above the prompt: koi drift and fishtail while you type, dart while Claude works, settle to the bottom as the context window fills, and a ripple (with a bloop) marks each finished turn.",
   "author": {
     "name": "glacier"

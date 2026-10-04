@@ -195,7 +195,7 @@ function resize(next: number) {
   }
   // two big koi on their own lanes, small ones along the top and bottom, a medium one mid-water
   const patterns: Pattern[] = ['kohaku', 'showa', 'tancho', 'sanke', 'kohaku', 'showa']
-  const sizes: [number, number][] = [[38, 10], [36, 10], [18, 4], [16, 4], [24, 5], [20, 5]]
+  const sizes: [number, number][] = [[36, 8], [38, 8], [18, 4], [16, 4], [26, 6], [20, 4]] // the reference mock's koi
   const lanes = [0.3, 0.72, 0.1, 0.92, 0.5, 0.2]
   while (fish.length < want) {
     const i = fish.length
@@ -408,11 +408,11 @@ function koiShape(L: number, Hh: number, wag: number, seed: number, pattern: Pat
   const fx = Math.floor(bodyL * 0.3)
   for (const lobe of [-1, 1]) {
     for (let i = 0; i < 2; i += 1) {
-      const y = lobe * (Math.round(half) + i) // fins attached to the flank
+      const y = lobe * (Math.round(half) + 1 + i) // pectoral fins one dot off the flank, as in the reference
       for (let x = fx + 1 + i; x < fx + 4 + i; x += 1) put(x, y, 'fin', base, true)
     }
   }
-  const INSIDE = new Set<Kind>(['body', 'patch', 'hole', 'stroke'])
+  const INSIDE = new Set<Kind>(['body', 'patch', 'hole', 'stroke', 'halo'])
   const isBody = (x: number, y: number) => INSIDE.has(kinds.get(`${x},${y}`)?.kind as Kind)
   const isEdge = (x: number, y: number) => !isBody(x + 1, y) || !isBody(x - 1, y) || !isBody(x, y + 1) || !isBody(x, y - 1)
   const r = mulberry32(seed)
@@ -421,19 +421,19 @@ function koiShape(L: number, Hh: number, wag: number, seed: number, pattern: Pat
   if (pattern === 'showa') {
     const n = L < 24 ? 1 : 2
     for (let i = 0; i < n; i += 1) {
-      const cx = bodyL * (0.25 + 0.5 * r())
-      const cy = (r() - 0.5) * half * 0.6
-      marks.push({ cx, cy, rx: Math.max(3, L * 0.12), ry: Math.max(2.5, half * 1.1), col: COL.black, inset: 0 })
+      const cx = bodyL * (0.3 + 0.45 * r())
+      const cy = (r() - 0.5) * half * 0.7
+      marks.push({ cx, cy, rx: Math.max(2.5, L * 0.09), ry: Math.max(1.5, half * 0.5), col: COL.black, inset: 0 })
     }
   } else if (pattern === 'tancho') {
-    marks.push({ cx: bodyL * 0.18, cy: -0.5, rx: 3.2, ry: 2.2, col: COL.orange, inset: 0 })
+    marks.push({ cx: bodyL * 0.17, cy: -0.5, rx: 2.6, ry: 2.0, col: COL.orange, inset: 0 })
   } else {
     const n = L < 24 ? 1 : 2
     for (let i = 0; i < n; i += 1) {
       const cx = bodyL * (0.3 + 0.45 * r())
       const cy = (r() - 0.5) * half * 0.7
       const black = pattern === 'sanke' && i === n - 1
-      marks.push({ cx, cy, rx: Math.max(3, L * 0.12), ry: Math.max(1.5, half * 0.6), col: black ? COL.black : COL.orange, inset: pattern === 'sanke' ? 1 : 0 })
+      marks.push({ cx, cy, rx: Math.max(2.5, L * 0.09), ry: Math.max(1.5, half * 0.5), col: black ? COL.black : COL.orange, inset: pattern === 'sanke' ? 1 : 0 })
     }
   }
   for (const m of marks) {
@@ -454,6 +454,18 @@ function koiShape(L: number, Hh: number, wag: number, seed: number, pattern: Pat
       d.kind = 'stroke'
       d.col = COL.stroke
     }
+  }
+  // the refined look: one unlit dot of body around each mark, except where the
+  // mark runs to the silhouette; the gap is what makes a mark read as a mark
+  const touchesMark = (x: number, y: number) => {
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const k = kinds.get(`${x + dx},${y + dy}`)?.kind
+      if (k === 'patch' || k === 'stroke') return true
+    }
+    return false
+  }
+  for (const d of kinds.values()) {
+    if (d.kind === 'body' && touchesMark(d.x, d.y) && !isEdge(d.x, d.y)) d.kind = 'halo'
   }
   const ex = Math.round(bodyL * 0.09)
   for (const x of [ex, ex + 1]) {
