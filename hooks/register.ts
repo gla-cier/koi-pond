@@ -3,10 +3,10 @@
 // The band is one Raster of braille cells (2x4 dots each, one colour per
 // cell, the terminal's own background), as wide as the band and ROWS tall.
 // Koi are drawn from a small shape routine every tick, so they swim, fishtail,
-// wag and turn; lily pads and a sparse field of water dots stay put.
+// wag and turn; lily pads and a sparse field of water dots stay put. No text:
+// the status line already carries the context figures.
 //
 // prompt.submit  -> the koi speed up (Claude is working)
-// tool.call      -> counts the main loop's tool calls for the caption
 // turn.complete  -> reads the context window; a ripple ring spreads and a
 //                   soft bloop plays (userConfig `sound`)
 // a 250 ms ticker-> moves the fish and repaints the Raster in place ($.ui.blit),
@@ -33,12 +33,11 @@ const COL = {
   pad: 0x4caf5a,
   padDark: 0x3a8f48,
   flower: 0xf4a3b8,
-  text: 0x6f8093,
 }
 const NONE = -1
 
 type Phase = 'idle' | 'working' | 'happy'
-type Pattern = 'kohaku' | 'tancho' | 'sanke'
+type Pattern = 'kohaku' | 'tancho' | 'sanke' | 'showa'
 type Fish = {
   x: number // head position in dots
   yBase: number // centre line the fish weaves around
@@ -62,7 +61,6 @@ let sound = true
 let phase: Phase = 'idle'
 let frame = 0
 let happyUntil = 0
-let tools = 0
 let reading: Reading | null = null
 let ticker: { cancel: () => void } | null = null
 let cols = 0
@@ -81,7 +79,6 @@ export const register: Register = (on, options) => {
     const result = await next(e)
     phase = 'idle'
     frame = 0
-    tools = 0
     await takeReading($)
     ticker?.cancel()
     ticker = $.clock.every(TICK_MS, () => {
@@ -105,15 +102,7 @@ export const register: Register = (on, options) => {
   on('prompt.submit', ($, e, next) => {
     if (!e.turnId) {
       phase = 'working'
-      tools = 0
-    }
-    return next(e)
-  })
-
-  on('tool.call', ($, e, next) => {
-    if (!e.agentId) {
-      tools += 1
-    }
+      }
     return next(e)
   })
 
@@ -157,21 +146,19 @@ export const register: Register = (on, options) => {
     const working = phase === 'working' || e.props.isWorking
     const tier = tierFor(reading?.percent ?? 0)
     const bodyColumns = e.props.bodyColumns ?? 80
-    const figures = reading ? `${reading.percent}% of context${bodyColumns >= 70 ? ` · ${short(reading.tokens)} / ${short(reading.window)}` : ''}` : ''
     const fits = e.surface === 'terminal' && typeof Raster === 'function' && (e.props.maxRows ?? 1) >= rows && bodyColumns >= 30
     if (!fits) {
       mounted = false
       const word = working ? 'koi darting' : tier.key === 'asleep' ? 'koi resting · time to /compact' : tier.key === 'drowsy' ? 'koi drifting slowly' : 'koi pond'
       return Box({ flexDirection: 'row', paddingX: 1, children: [
         Text({ color: working ? 'cyan' : tier.color, bold: true, children: `≋ ${word}` }),
-        figures ? Text({ dimColor: true, children: `  ·  ${figures}` }) : null,
       ] })
     }
     resize(Math.max(20, Math.min(512, bodyColumns - 2)))
     requestId = e.requestId
     mounted = true
     return Box({ flexDirection: 'row', paddingX: 1, children: [
-      Raster({ key: 'pond', columns: cols, rows, cells: cellsFor(working, tier, figures) }),
+      Raster({ key: 'pond', columns: cols, rows, cells: cellsFor() }),
     ] })
   })
 }
@@ -191,7 +178,7 @@ function resize(next: number) {
     const ratio = W / (prev * 2)
     for (const f of fish) f.x = Math.min(W - 2, Math.max(1, f.x * ratio))
   }
-  const patterns: Pattern[] = ['kohaku', 'sanke', 'tancho', 'kohaku', 'sanke', 'kohaku', 'tancho']
+  const patterns: Pattern[] = ['kohaku', 'showa', 'tancho', 'sanke', 'kohaku', 'showa', 'tancho']
   const sizes: [number, number][] = [[36, 9], [38, 9], [26, 6], [18, 4], [16, 4], [30, 7], [20, 5]]
   while (fish.length < want) {
     const i = fish.length
@@ -327,6 +314,7 @@ function koiShape(L: number, Hh: number, wag: number, seed: number, pattern: Pat
   if (hit) return hit
   const half = Hh / 2
   const bodyL = L * 0.7
+  const base = pattern === 'showa' ? COL.orange : COL.white // showa: orange body, black spots
   const cut = (y: number) => bodyL - 1 + 0.45 * y // the slanted separator
   type Kind = 'body' | 'tail' | 'fin' | 'patch' | 'eye' | 'halo'
   const kinds = new Map<string, { x: number; y: number; kind: Kind; col: number }>()
@@ -340,7 +328,7 @@ function koiShape(L: number, Hh: number, wag: number, seed: number, pattern: Pat
     const h = t < 0.3 ? half * Math.sqrt(Math.max(0, 1 - ((0.3 - t) / 0.3) ** 2)) : (half - 0.8) * (1 - ((t - 0.3) / 0.7) ** 1.3) + 0.8
     const hh = Math.round(h)
     for (let y = -hh; y <= hh; y += 1) {
-      if (x <= cut(y)) put(x, y, 'body', COL.white)
+      if (x <= cut(y)) put(x, y, 'body', base)
     }
   }
   const tailStart = bodyL + 1
@@ -351,7 +339,7 @@ function koiShape(L: number, Hh: number, wag: number, seed: number, pattern: Pat
     for (const lobe of [-1, 1]) {
       const yc = lobe * spread * 0.85 + bend
       for (let y = Math.floor(yc - 0.5); y <= Math.ceil(yc + 0.5); y += 1) {
-        if (x >= cut(y) + 2) put(x, y, 'tail', COL.white, true)
+        if (x >= cut(y) + 2) put(x, y, 'tail', base, true)
       }
     }
   }
@@ -359,29 +347,38 @@ function koiShape(L: number, Hh: number, wag: number, seed: number, pattern: Pat
   for (const lobe of [-1, 1]) {
     for (let i = 0; i < 2; i += 1) {
       const y = lobe * (Math.round(half) + 1 + i)
-      for (let x = fx + 1 + i; x < fx + 4 + i; x += 1) put(x, y, 'fin', COL.white, true)
+      for (let x = fx + 1 + i; x < fx + 4 + i; x += 1) put(x, y, 'fin', base, true)
     }
   }
   const isBody = (x: number, y: number) => kinds.get(`${x},${y}`)?.kind === 'body' || kinds.get(`${x},${y}`)?.kind === 'patch'
   const isEdge = (x: number, y: number) => !isBody(x + 1, y) || !isBody(x - 1, y) || !isBody(x, y + 1) || !isBody(x, y - 1)
   const r = mulberry32(seed)
-  const marks: { cx: number; cy: number; rx: number; ry: number; col: number; inset: boolean }[] = []
-  if (pattern === 'tancho') {
-    marks.push({ cx: bodyL * 0.18, cy: -0.5, rx: 3.2, ry: 2.2, col: COL.orange, inset: false })
+  const deepEdge = (x: number, y: number) => isEdge(x, y) || isEdge(x + 1, y) || isEdge(x - 1, y) || isEdge(x, y + 1) || isEdge(x, y - 1)
+  const marks: { cx: number; cy: number; rx: number; ry: number; col: number; inset: 0 | 1 | 2 }[] = []
+  if (pattern === 'showa') {
+    const n = L < 24 ? 1 : 2
+    for (let i = 0; i < n; i += 1) {
+      const cx = bodyL * (0.25 + 0.5 * r())
+      const cy = (r() - 0.5) * half * 0.6
+      marks.push({ cx, cy, rx: Math.max(3, L * 0.13), ry: Math.max(2, half * 0.7), col: COL.black, inset: 2 })
+    }
+  } else if (pattern === 'tancho') {
+    marks.push({ cx: bodyL * 0.18, cy: -0.5, rx: 3.2, ry: 2.2, col: COL.orange, inset: 0 })
   } else {
     const n = L < 24 ? 1 : 2
     for (let i = 0; i < n; i += 1) {
       const cx = bodyL * (0.3 + 0.45 * r())
       const cy = (r() - 0.5) * half * 0.7
       const black = pattern === 'sanke' && i === n - 1
-      marks.push({ cx, cy, rx: Math.max(3, L * 0.12), ry: Math.max(1.5, half * 0.6), col: black ? COL.black : COL.orange, inset: pattern === 'sanke' })
+      marks.push({ cx, cy, rx: Math.max(3, L * 0.12), ry: Math.max(1.5, half * 0.6), col: black ? COL.black : COL.orange, inset: pattern === 'sanke' ? 1 : 0 })
     }
   }
   for (const m of marks) {
     for (const d of kinds.values()) {
       if (d.kind !== 'body') continue
       if (((d.x - m.cx) / m.rx) ** 2 + ((d.y - m.cy) / m.ry) ** 2 > 1) continue
-      if (m.inset && isEdge(d.x, d.y)) continue // the white rim stays white
+      if (m.inset === 1 && isEdge(d.x, d.y)) continue // the white rim stays white
+      if (m.inset === 2 && deepEdge(d.x, d.y)) continue // black stays two dots inside the orange
       d.kind = 'patch'
       d.col = m.col
     }
@@ -407,7 +404,7 @@ function koiShape(L: number, Hh: number, wag: number, seed: number, pattern: Pat
 
 type Tier = { key: 'fresh' | 'drowsy' | 'asleep'; color: string }
 
-function cellsFor(working: boolean, tier: Tier, figures: string): string {
+function cellsFor(): string {
   const W = cols * 2
   const buf = scene()
   const words = new Uint32Array(cols * rows * 3)
@@ -443,17 +440,6 @@ function cellsFor(working: boolean, tier: Tier, figures: string): string {
       words[i++] = DEFAULT
     }
   }
-  // the caption, as cells along the bottom right
-  const label = working ? `koi darting${tools ? ` · ${tools} tools` : ''}${figures ? ` · ${figures}` : ''}`
-    : tier.key === 'asleep' ? `resting · time to /compact${figures ? ` · ${figures}` : ''}`
-      : figures
-  const text = label.slice(0, Math.max(0, cols - 2))
-  const start = ((rows - 1) * cols + (cols - 1 - text.length)) * 3
-  for (let k = 0; k <= text.length; k += 1) { // the text, then one blank cell of margin
-    words[start + k * 3] = k < text.length ? text.charCodeAt(k) : 0x20
-    words[start + k * 3 + 1] = working ? 0x5fb3c9 : COL.text
-    words[start + k * 3 + 2] = DEFAULT
-  }
   return base64(new Uint8Array(words.buffer))
 }
 
@@ -467,9 +453,7 @@ function waterMask(buf: Int32Array, W: number, cx: number, cy: number): number {
 }
 
 async function repaint($: { ui: { blit: (args: Record<string, unknown>) => Promise<{ deny?: string }>; invalidate: (e: 'ui.render') => void } }) {
-  const tier = tierFor(reading?.percent ?? 0)
-  const figures = reading ? `${reading.percent}% of context${cols >= 68 ? ` · ${short(reading.tokens)} / ${short(reading.window)}` : ''}` : ''
-  const cells = cellsFor(phase === 'working', tier, figures)
+  const cells = cellsFor()
   if (requestId) {
     try {
       const r = await $.ui.blit({ requestId, key: 'pond', columns: cols, rows, cells })
@@ -522,11 +506,6 @@ function mulberry32(a: number): () => number {
   }
 }
 
-function short(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(n % 1_000 === 0 ? 0 : 1)}k`
-  return String(n)
-}
 
 function base64(bytes: Uint8Array): string {
   const anyBytes = bytes as unknown as { toBase64?: () => string }
