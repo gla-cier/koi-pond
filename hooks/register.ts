@@ -188,7 +188,7 @@ function resize(next: number) {
   cols = next
   const W = cols * 2
   const H = rows * 4
-  const want = Math.max(2, Math.min(6, Math.round(cols / 22)))
+  const want = Math.max(2, Math.min(5, Math.round(cols / 36))) // room to swim: 3 koi at 100 cells, 4 at 150
   if (prev > 0 && fish.length > 0) {
     const ratio = W / (prev * 2)
     for (const f of fish) f.x = Math.min(W - 2, Math.max(1, f.x * ratio))
@@ -243,7 +243,15 @@ function step() {
       if (f.yBase < floor) f.yBase = Math.min(floor, f.yBase + 0.25)
       continue
     }
-    f.x += f.dir * f.speed * factor
+    // traffic sense: a koi closing on another at the same depth and heading eases off
+    let pace = 1
+    for (const g of fish) {
+      if (g === f || g.dir !== f.dir) continue
+      if (Math.abs(g.yBase - f.yBase) > (f.Hh + g.Hh) / 2) continue
+      const ahead = f.dir === -1 ? f.x - (g.x + g.L) : g.x - g.L - f.x // gap from my head to its tail
+      if (ahead > 0 && ahead < 10) pace = Math.min(pace, 0.4)
+    }
+    f.x += f.dir * f.speed * factor * pace
     const margin = 4
     const nearEdge = (f.dir === -1 && f.x < margin) || (f.dir === 1 && f.x > W - margin)
     if (nearEdge || rnd() < turnChance) {
