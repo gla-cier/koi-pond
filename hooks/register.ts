@@ -33,6 +33,7 @@ const COL = {
   pad: 0x4caf5a,
   padDark: 0x3a8f48,
   flower: 0xf4a3b8,
+  stroke: 0xb8c0c8, // where black meets the water on a showa
 }
 const NONE = -1
 
@@ -259,7 +260,8 @@ function scene(): Int32Array {
     }
   }
   const factor = speedFactor()
-  for (const f of fish) {
+  // z-order: smaller koi are drawn first, so a bigger fish always passes over a smaller one
+  for (const f of [...fish].sort((a, b) => a.L - b.L)) {
     const progress = f.turning > 0 ? (6 - f.turning) / 6 : 0
     const squeeze = f.turning > 0 ? Math.max(0.3, Math.abs(Math.cos(progress * Math.PI))) : 1
     const wag = factor === 0 ? 0 : 0.7 * Math.sin(frame * (0.5 + f.speed * 1.5) + f.phase) * Math.min(1, factor)
@@ -360,7 +362,7 @@ function koiShape(L: number, Hh: number, wag: number, seed: number, pattern: Pat
     for (let i = 0; i < n; i += 1) {
       const cx = bodyL * (0.25 + 0.5 * r())
       const cy = (r() - 0.5) * half * 0.6
-      marks.push({ cx, cy, rx: Math.max(3, L * 0.13), ry: Math.max(2, half * 0.7), col: COL.black, inset: 2 })
+      marks.push({ cx, cy, rx: Math.max(3, L * 0.13), ry: Math.max(2, half * 0.7), col: COL.black, inset: 0 })
     }
   } else if (pattern === 'tancho') {
     marks.push({ cx: bodyL * 0.18, cy: -0.5, rx: 3.2, ry: 2.2, col: COL.orange, inset: 0 })
@@ -385,8 +387,15 @@ function koiShape(L: number, Hh: number, wag: number, seed: number, pattern: Pat
   }
   for (const d of kinds.values()) {
     if (d.kind !== 'body' || isEdge(d.x, d.y)) continue
-    const touching = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([a, b]) => kinds.get(`${d.x + a!},${d.y + b!}`)?.kind === 'patch')
+    const touching = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([a, b]) => {
+      const n = kinds.get(`${d.x + a!},${d.y + b!}`)
+      return n?.kind === 'patch' && n.col !== COL.black // no halo around black: it would only widen the spot
+    })
     if (touching) d.kind = 'halo'
+  }
+  // where a black spot reaches the silhouette, the edge dots become a light stroke
+  for (const d of kinds.values()) {
+    if (d.kind === 'patch' && d.col === COL.black && isEdge(d.x, d.y)) d.col = COL.stroke
   }
   const ex = Math.round(bodyL * 0.09)
   for (const x of [ex, ex + 1]) {
@@ -430,8 +439,9 @@ function cellsFor(): string {
         // one colour per cell: a marking with three or more dots claims the cell,
         // else the most common colour, so koi keep their patches at this scale
         const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1])
+        const stroke = ranked.find(([c]) => c === COL.stroke)
         const mark = ranked.find(([c, n]) => (c === COL.orange || c === COL.black) && n >= 3)
-        col = (mark ?? ranked[0]!)[0]
+        col = (stroke ?? mark ?? ranked[0]!)[0]
       } else if (bits) {
         col = (bits & ~waterMask(buf, W, cx, cy)) ? COL.ripple : COL.water
       }
