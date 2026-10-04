@@ -57,7 +57,12 @@ type Fish = {
 }
 type Ripple = { x: number; y: number; t0: number }
 type Reading = { tokens: number; window: number; percent: number }
-type Dot = { x: number; y: number; lit: boolean; col: number }
+type Dot = { x: number; y: number; lit: boolean; col: number; edge: boolean }
+type Mark = { cx: number; cy: number; rx: number; ry: number; col: number; inset: 0 | 1 | 2 }
+type Shape = { dots: Dot[]; marks: Mark[]; base: number }
+// A koi as drawn this frame: where its head is and which way it faces, so a
+// cell's colour can be read off the shape at the cell's centre.
+type Drawn = { dir: 1 | -1; hx: number; hy: number; shape: Shape; pattern: Pattern }
 
 let rows = 6
 let sound = true
@@ -73,6 +78,9 @@ let ripples: Ripple[] = []
 let requestId: string | null = null
 let mounted = false
 let rnd = mulberry32(0x9e3779b9)
+let drawn: Drawn[] = []
+let own = new Int16Array(0) // per dot: 0 water or pad, else 1 + index into `drawn`
+let edg = new Uint8Array(0) // per dot: 1 where a koi's silhouette edge is
 
 export const register: Register = (on, options) => {
   sound = options?.sound !== false
@@ -185,7 +193,7 @@ function resize(next: number) {
   }
   // two big koi on their own lanes, small ones along the top and bottom, a medium one mid-water
   const patterns: Pattern[] = ['kohaku', 'showa', 'tancho', 'sanke', 'kohaku', 'showa']
-  const sizes: [number, number][] = [[36, 9], [34, 8], [18, 4], [16, 4], [24, 5], [20, 5]]
+  const sizes: [number, number][] = [[36, 9], [34, 9], [18, 4], [16, 4], [24, 5], [20, 5]]
   const lanes = [0.3, 0.72, 0.1, 0.92, 0.5, 0.2]
   while (fish.length < want) {
     const i = fish.length
@@ -254,6 +262,9 @@ function scene(): Int32Array {
   const W = cols * 2
   const H = rows * 4
   const buf = new Int32Array(W * H).fill(NONE)
+  own = new Int16Array(W * H)
+  edg = new Uint8Array(W * H)
+  drawn = []
   for (let y = 0; y < H; y += 4) {
     for (let x = 0; x < W; x += 4) buf[y * W + x] = COL.water
   }
@@ -272,14 +283,19 @@ function scene(): Int32Array {
     const progress = f.turning > 0 ? (6 - f.turning) / 6 : 0
     const squeeze = f.turning > 0 ? Math.max(0.3, Math.abs(Math.cos(progress * Math.PI))) : 1
     const wag = factor === 0 ? 0 : 0.7 * Math.sin(frame * (0.5 + f.speed * 1.5) + f.phase) * Math.min(1, factor)
-    const dots = koiShape(Math.max(8, Math.round(f.L * squeeze)), f.Hh, wag, f.seed, f.pattern)
+    const shape = koiShape(Math.max(8, Math.round(f.L * squeeze)), f.Hh, wag, f.seed, f.pattern)
     const hx = Math.round(f.x)
     const hy = Math.round(fishY(f))
-    for (const d of dots) {
+    drawn.push({ dir: f.dir, hx, hy, shape, pattern: f.pattern })
+    const id = drawn.length
+    for (const d of shape.dots) {
       const X = f.dir === -1 ? hx + d.x : hx - d.x
       const Y = hy + d.y
       if (X < 0 || X >= W || Y < 0 || Y >= H) continue
-      buf[Y * W + X] = d.lit ? d.col : NONE // opaque: a gap hides whatever is beneath
+      const k = Y * W + X
+      buf[k] = d.lit ? d.col : NONE // opaque: a gap hides whatever is beneath
+      own[k] = d.lit ? id : 0
+      edg[k] = d.lit && d.edge ? 1 : 0
     }
   }
   // lily pads on top: the koi pass under them (the bottom right is the caption's)
@@ -297,7 +313,10 @@ function lily(buf: Int32Array, W: number, H: number, cx: number, cy: number, r: 
       if (x > r && Math.abs(y) < 1) continue // the notch
       const X = cx + x
       const Y = cy + y
-      if (X >= 0 && X < W && Y >= 0 && Y < H) buf[Y * W + X] = (x + y) % 3 === 0 ? COL.padDark : COL.pad
+      if (X >= 0 && X < W && Y >= 0 && Y < H) {
+        buf[Y * W + X] = (x + y) % 3 === 0 ? COL.padDark : COL.pad
+        own[Y * W + X] = 0
+      }
     }
   }
   if (flower) {
@@ -306,7 +325,10 @@ function lily(buf: Int32Array, W: number, H: number, cx: number, cy: number, r: 
         if (Math.abs(x) + Math.abs(y) > 2) continue
         const X = cx + x
         const Y = cy + y
-        if (X >= 0 && X < W && Y >= 0 && Y < H) buf[Y * W + X] = COL.flower
+        if (X >= 0 && X < W && Y >= 0 && Y < H) {
+          buf[Y * W + X] = COL.flower
+          own[Y * W + X] = 0
+        }
       }
     }
   }
@@ -315,9 +337,9 @@ function lily(buf: Int32Array, W: number, H: number, cx: number, cy: number, r: 
 // A koi facing left, head at the origin, body along +x. Dots carry a colour and
 // whether they are lit; unlit dots are the eye, the slanted gap before the tail,
 // the one-dot halo around each marking: they clear what is beneath them.
-const shapeCache = new Map<string, Dot[]>()
+const shapeCache = new Map<string, Shape>()
 
-function koiShape(L: number, Hh: number, wag: number, seed: number, pattern: Pattern): Dot[] {
+function koiShape(L: number, Hh: number, wag: number, seed: number, pattern: Pattern): Shape {
   const key = `${L},${Hh},${wag.toFixed(2)},${seed},${pattern}`
   const hit = shapeCache.get(key)
   if (hit) return hit
@@ -363,13 +385,13 @@ function koiShape(L: number, Hh: number, wag: number, seed: number, pattern: Pat
   const isEdge = (x: number, y: number) => !isBody(x + 1, y) || !isBody(x - 1, y) || !isBody(x, y + 1) || !isBody(x, y - 1)
   const r = mulberry32(seed)
   const deepEdge = (x: number, y: number) => isEdge(x, y) || isEdge(x + 1, y) || isEdge(x - 1, y) || isEdge(x, y + 1) || isEdge(x, y - 1)
-  const marks: { cx: number; cy: number; rx: number; ry: number; col: number; inset: 0 | 1 | 2 }[] = []
+  const marks: Mark[] = []
   if (pattern === 'showa') {
     const n = L < 24 ? 1 : 2
     for (let i = 0; i < n; i += 1) {
       const cx = bodyL * (0.25 + 0.5 * r())
       const cy = (r() - 0.5) * half * 0.6
-      marks.push({ cx, cy, rx: Math.max(3, L * 0.13), ry: Math.max(2, half * 0.7), col: COL.black, inset: 0 })
+      marks.push({ cx, cy, rx: Math.max(3, L * 0.12), ry: Math.max(2.5, half * 1.1), col: COL.black, inset: 0 })
     }
   } else if (pattern === 'tancho') {
     marks.push({ cx: bodyL * 0.18, cy: -0.5, rx: 3.2, ry: 2.2, col: COL.orange, inset: 0 })
@@ -400,20 +422,20 @@ function koiShape(L: number, Hh: number, wag: number, seed: number, pattern: Pat
     })
     if (touching) d.kind = 'halo'
   }
-  // where a black spot reaches the silhouette, the edge dots become a light stroke
-  for (const d of kinds.values()) {
-    if (d.kind === 'patch' && d.col === COL.black && isEdge(d.x, d.y)) d.col = COL.stroke
-  }
   const ex = Math.round(bodyL * 0.09)
   for (const x of [ex, ex + 1]) {
     const d = kinds.get(`${x},-1`)
     if (d && d.kind === 'body') d.kind = 'eye'
   }
   const dots: Dot[] = []
-  for (const d of kinds.values()) dots.push({ x: d.x, y: d.y, lit: d.kind !== 'eye' && d.kind !== 'halo', col: d.col })
+  for (const d of kinds.values()) {
+    const silhouette = d.kind === 'tail' || d.kind === 'fin' || isEdge(d.x, d.y)
+    dots.push({ x: d.x, y: d.y, lit: d.kind !== 'eye' && d.kind !== 'halo', col: d.col, edge: silhouette })
+  }
+  const shape: Shape = { dots, marks, base }
   if (shapeCache.size > 256) shapeCache.clear()
-  shapeCache.set(key, dots)
-  return dots
+  shapeCache.set(key, shape)
+  return shape
 }
 
 // ---- cells ------------------------------------------------------------------
@@ -430,25 +452,43 @@ function cellsFor(): string {
     for (let cx = 0; cx < cols; cx += 1) {
       let bits = 0
       let fishBits = 0
+      let top = 0 // the koi on top in this cell, 0 for none
+      let edge = false
       const counts = new Map<number, number>()
       ORDER.forEach(([dx, dy], k) => {
-        const c = buf[(cy * 4 + dy) * W + cx * 2 + dx] ?? NONE
+        const at = (cy * 4 + dy) * W + cx * 2 + dx
+        const c = buf[at] ?? NONE
         if (c === NONE) return
         bits |= 1 << k
         if (c !== COL.water && c !== COL.ripple) {
           fishBits |= 1 << k
           counts.set(c, (counts.get(c) ?? 0) + 1)
+          const o = own[at] ?? 0
+          if (o > top) { top = o; edge = false }
+          if (o === top && o > 0 && edg[at]) edge = true
         }
       })
       let col = DEFAULT
       if (counts.size > 0) {
         bits = fishBits // water dots do not show through a koi's cell
-        // one colour per cell: a marking with three or more dots claims the cell,
-        // else the most common colour, so koi keep their patches at this scale
-        const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1])
-        const stroke = ranked.find(([c]) => c === COL.stroke)
-        const mark = ranked.find(([c, n]) => (c === COL.orange || c === COL.black) && n >= 3)
-        col = (stroke ?? mark ?? ranked[0]!)[0]
+        if (top > 0) {
+          // one colour per cell: read the koi's pattern at the cell's centre, so a
+          // marking is a steady shape that travels with the fish instead of a
+          // count of dots that flips as the fish crosses cell boundaries
+          const d = drawn[top - 1]!
+          const cxDot = cx * 2 + 0.5
+          const cyDot = cy * 4 + 1.5
+          const lx = d.dir === -1 ? cxDot - d.hx : d.hx - cxDot
+          const ly = cyDot - d.hy
+          col = d.shape.base
+          for (const m of d.shape.marks) {
+            if (((lx - m.cx) / m.rx) ** 2 + ((ly - m.cy) / m.ry) ** 2 <= 1) col = m.col
+          }
+          if (col === COL.black && edge) col = COL.stroke // black meets the water here: a grey cut keeps the silhouette
+          else if (d.pattern === 'sanke' && edge && col !== d.shape.base) col = d.shape.base // the sanke's rim stays white
+        } else {
+          col = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]![0]
+        }
       } else if (bits) {
         col = (bits & ~waterMask(buf, W, cx, cy)) ? COL.ripple : COL.water
       }
