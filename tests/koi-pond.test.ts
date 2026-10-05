@@ -130,3 +130,24 @@ for (const fish of ['pixels', 'dots'] as const) {
     await ui.unmount()
   })
 }
+
+test('past 80% night falls on the pond and the moon lies on the water, over the koi', async ($, on) => {
+  // the test answers $.session.usage beneath the plugin: 270k of a 300k window
+  on('session.usage', () => ({ value: { startedAt: 0, rateLimits: [], context: { tokens: 270_000, window: 300_000, percent: 90 } } }) as any)
+  on('ui.render', { component: 'AbovePrompt' }, emptyBand)
+  const { text } = (await $.command.run({ command: 'koi' } as any)) as any // /koi takes a reading
+  expect(text).toMatch(/90%: asleep/)
+  const ui = await $.ui.mount({ plugin: 'koi-pond', surface: 'terminal', ...band({}) })
+  const pond = await ui.find({ type: 'Raster', key: 'pond' } as any)
+  const cells = glyphs(pond)
+  const cols = (pond as any).props.columns
+  const rows = (pond as any).props.rows
+  // the moon's core, where the plugin puts it: 64% across, 42% down, full braille, pale
+  const [g, fg] = cells[Math.floor(rows * 0.42) * cols + Math.floor(cols * 0.64)]!
+  expect(g).toBe(0x28ff)
+  // full moonlight: the moon's colour 90% of the way from the dark ground
+  const want = [[0x16, 0xe9], [0x18, 0xe6], [0x1c, 0xd2]].map(([a, m]) => Math.round(a! + (m! - a!) * 0.9))
+  const got = [(fg! >> 16) & 255, (fg! >> 8) & 255, fg! & 255]
+  got.forEach((c, k) => expect(Math.abs(c - want[k]!)).toBeLessThan(3))
+  await ui.unmount()
+})

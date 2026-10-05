@@ -61,6 +61,7 @@ type Reading = { tokens: number; window: number; percent: number; source: string
 
 let rows = 6
 let sound = true
+let algaeOn = false // opt-in: algae grows in the tank over the session
 let view: View = 'pond'
 let draw: Draw = 'pixels'
 let waterDots = false
@@ -77,6 +78,7 @@ let rnd = mulberry32(0x9e3779b9)
 
 export const register: Register = (on, options) => {
   sound = options?.sound !== false
+  algaeOn = options?.algae === true
   view = options?.view === 'tank' ? 'tank' : 'pond'
   draw = options?.fish === 'pixels' ? 'pixels' : 'dots'
   waterDots = options?.water === 'dots'
@@ -87,6 +89,7 @@ export const register: Register = (on, options) => {
     const result = await next(e)
     phase = 'idle'
     frame = 0
+    algaeT = 0 // a new session, a clean tank
     await takeReading($)
     try {
       await $.command.register({ name: 'koi', description: 'How full the koi think the context is, and against which window' })
@@ -505,19 +508,25 @@ function swim(f: PondKoi, h: number) {
     }
   }
   if (factor === 0) {
-    f.depthTo = 0.7 // resting: sink, and drift slow as a leaf to sleep under a pad
+    f.depthTo = 0.7 // resting: sink, and swim to sleep under a pad
+    // Koi share a pad two by two, side by side and facing opposite ways. The body
+    // follows the head's wake, so a koi lines up behind the pad first, then swims
+    // in along that line: it ends with its body under the pad, not across it.
     const ps = padsFor()
     const p = ps[f.bed % ps.length]!
-    const side = Math.floor(f.bed / ps.length) % 2 // koi share a pad two by two, one each side
-    const gx = p[0] + (side ? 9 : -9) - f.x
-    const gy = p[1] + (side ? 2 : -2) - f.y
-    const d = Math.hypot(gx, gy)
-    if (d > 1.5) {
-      let turn = Math.atan2(gy, gx) - f.th
+    const side = Math.floor(f.bed / ps.length) % 2
+    const rx = side ? -1 : 1 // the way it faces asleep
+    const ty = p[1] + (side ? 2 : -2)
+    const along = (f.x - p[0]) * rx
+    const lined = Math.abs(f.y - ty) < 2.5 && along > -f.L * 0.7 && Math.cos(f.th) * rx > 0.7
+    const tx = p[0] + rx * (lined ? f.L * 0.45 : -f.L * 0.5)
+    const d = Math.hypot(tx - f.x, ty - f.y)
+    if (d > 1 && !(lined && along >= f.L * 0.45 - 1)) {
+      let turn = Math.atan2(ty - f.y, tx - f.x) - f.th
       while (turn > Math.PI) turn -= 2 * Math.PI
       while (turn < -Math.PI) turn += 2 * Math.PI
-      f.th += Math.max(-1.2 * h, Math.min(1.2 * h, turn))
-      v = Math.min(4, d * 0.3)
+      f.th += Math.max(-5 * h, Math.min(5 * h, turn))
+      v = Math.min(28, 2 + d * 1.5) * Math.max(0.25, Math.cos(turn)) // quick, so a short night still finds them in bed
     }
   } else if (f.uturn) {
     v *= 1.5 // a koi powers through a turn
@@ -751,17 +760,17 @@ function paintPond(g: Grid) {
     }
   }
   for (const d of pond.drops) {
-    // a raindrop: a dot, then a ring that widens and fades, on the surface over the koi
-    if (d.age < 0.12) {
-      put(g, Math.floor(d.x / s), Math.floor(d.y / s), NIGHT_COL.drop, L_RIPPLE, 3001)
+    // a raindrop: a dot, then a small ring that widens and fades, on open water
+    if (d.age < 0.15) {
+      putEmpty(g, Math.floor(d.x / s), Math.floor(d.y / s), NIGHT_COL.drop, L_RIPPLE, 3001)
       continue
     }
-    const c = mix(ground, NIGHT_COL.rain, 0.95 - d.age * 0.85)
-    const rad = 1 + d.age * (s === 1 ? 10 : 9)
-    for (let a = 0; a < 360; a += s === 1 ? 10 : 20) {
+    const c = mix(ground, COL.ripple, 0.9 - d.age)
+    const rad = 0.8 + d.age * (s === 1 ? 4.5 : 5)
+    for (let a = 0; a < 360; a += s === 1 ? 20 : 30) {
       const x = d.x + rad * Math.cos((a * Math.PI) / 180)
       const y = d.y + rad * Math.sin((a * Math.PI) / 180) * 0.8
-      put(g, Math.floor(x / s), Math.floor(y / s), c, L_RIPPLE, 3001)
+      putEmpty(g, Math.floor(x / s), Math.floor(y / s), c, L_RIPPLE, 3001)
     }
   }
   if (fly.mode !== 'away') dragonfly(g, s)
@@ -790,7 +799,7 @@ function feedPond() {
 
 // ---- the pond's weather: night, rain, caustics and a dragonfly ----------------------
 
-const NIGHT_COL = { bud: 0xc77d92, drop: 0xb8dcea, rain: 0x8cc4dc, moon: 0xe9e6d2, glint: 0xb9c2c8, moonlit: 0xa8b8c8, daylight: 0x3f7488, wing: 0xd6e8ef }
+const NIGHT_COL = { bud: 0xc77d92, drop: 0x9cc7da, moon: 0xe9e6d2, glint: 0xb9c2c8, moonlit: 0xa8b8c8, daylight: 0x3f7488, wing: 0xd6e8ef }
 const KEY_CAUSTIC = 4100
 const KEY_MOON = 7700
 const KEY_GLINT = 7701
@@ -963,6 +972,8 @@ type Puff = { x: number; y: number; vx: number; vy: number; age: number }
 type Splash = { x: number; age: number }
 
 const SNAIL_SPEED = 1.2 // columns a second, in dots
+const ALGAE_FULL_S = 75 * 60 // algae is fully grown after an hour and a quarter
+let algaeT = 0 // seconds the tank has run this session
 const tank = { fish: [] as TankKoi[], flakes: [] as Flake[], bubbles: [] as Bubble[], pops: [] as Pop[], puffs: [] as Puff[], splashes: [] as Splash[], t: 0, nextBubble: 0 }
 const TURN_S = 1.5
 
@@ -1222,6 +1233,7 @@ function uTurnLane(f: TankKoi): number {
 
 function stepTank(dt: number) {
   tank.t += dt
+  algaeT += dt
   const W = tankW()
   const H = tankH()
   const factor = speedFactor()
@@ -1470,6 +1482,7 @@ function paintTank(g: Grid) {
     if (snap() && n > 0.45) put(g, x, H - 2, GRAVEL[(Math.floor(n * 10) + 1) % GRAVEL.length]!, L_GRAVEL, 6000 + Math.floor(n * 3))
   }
   for (const q of tank.flakes) put(g, Math.round(q.x), Math.round(q.y), Math.sin(q.age * 7 + q.x) > 0 ? 0xe0a868 : COL.pellet, L_FOOD, 2000)
+  if (algaeOn) algae(g)
   glass(g)
   snail(g)
   if (light < 1) {
@@ -1477,6 +1490,129 @@ function paintTank(g: Grid) {
       const c = g.col[i]!
       if (c >= 0) g.col[i] = mix(ground, mix(c, 0x1a2c4a, (1 - light) * 0.55), 0.25 + light * 0.75)
     }
+  }
+  if (light < 0.5) moonlight(g)
+}
+
+const hash = (x: number, y: number) => Math.abs(Math.sin(x * 127.1 + y * 311.7) * 43758.5453) % 1
+
+// Night: moonlight, painted over the dimmed tank. A pale moon shimmering on the
+// surface, a silver rim along the top of each koi, and cool glints that come and
+// go on the gravel. In pixels the rim is the koi's own top pixel, silvered. In
+// dots a cell has one colour, so silvering the top would pale the whole back;
+// the rim is a line of dots just above the koi's top cell row instead, in the
+// cell above, where it has the cell to itself.
+function moonlight(g: Grid) {
+  const W = g.w
+  const H = g.h
+  const t = tank.t
+  const dots = snap()
+  const mx = Math.floor(W * 0.72)
+  const half = dots ? 5 : 3
+  for (let x = mx - half; x <= mx + half; x += 1) {
+    const edge = Math.abs(x - mx) / half
+    if (edge > 0.5 && Math.sin(t * 2.2 + x * 1.7) < 0) continue // the reflection breaks up at its ends
+    put(g, x, 0, edge < 0.5 ? 0xf2f6fc : 0xc9d6e8, 95, 7300)
+    if (edge < 0.6 && Math.sin(t * 1.6 + x * 2.3) > 0.1) put(g, x, 1, 0x8fa3bf, 95, 7301)
+  }
+  const isFish = (x: number, y: number) => y >= 0 && g.layer[y * W + x]! >= L_FISH && g.layer[y * W + x]! < L_GRAVEL
+  for (let x = 0; x < W; x += 1) for (let y = 1; y < H; y += 1) {
+    const i = y * W + x
+    if (!isFish(x, y) || isFish(x, y - 1) || g.col[i]! < 0) continue
+    if (!dots) {
+      g.col[i] = mix(g.col[i]!, 0xdce6f4, 0.6)
+      continue
+    }
+    const above = Math.floor(y / 4) * 4 - 1 // the bottom dot row of the cell above
+    if (above >= 1 && !isFish(x, above)) put(g, x, above, 0xc8d4e6, L_FISH - 1, 7302)
+  }
+  for (let x = 1; x < W - 1; x += 1) {
+    if (hash(x, 11) > (dots ? 0.1 : 0.14)) continue
+    if (Math.sin(t * 1.3 + x * 4.1) < 0.4) continue
+    put(g, x, H - 1, 0xc4d4ea, 99, 7310)
+  }
+}
+
+// Algae (opt-in), grown over the session's real time and unevenly: green
+// creeping up the glass at both ends in tendrils, a clumpy film along the bottom
+// of the glass that the snail grazes a clean trail through, odd clumps out on
+// the glass, and moss tufts on the stone, the driftwood and the gravel. Each
+// part starts at its own point, so it never grows in step.
+const MOSS = 0x4f8f3a
+const MOSS_TIP = 0x7dbb4e
+function algae(g: Grid) {
+  const W = g.w
+  const H = g.h
+  const grown = Math.min(1, algaeT / ALGAE_FULL_S)
+  const stage = (from: number) => Math.max(0, Math.min(1, (grown - from) / (1 - from)))
+  const dots = snap()
+  // tendrils up the glass at each end: some columns shoot up, most stay low, and the tips wander
+  const ends = stage(0)
+  const ew = dots ? 3 : 2
+  if (ends > 0) for (const side of [0, 1]) for (let e = 0; e < ew; e += 1) {
+    const x0 = side ? W - 2 - e : 1 + e
+    const shoot = hash(x0, 7) > 0.6 ? 1.35 : 0.55 + 0.35 * hash(x0, 9)
+    const reach = Math.min(H - 3, ends * (H - 2) * shoot * (1 - e * 0.22))
+    for (let y = H - 2; y >= H - 2 - reach; y -= 1) {
+      const up = (H - 2 - y) / Math.max(1, reach)
+      const x = x0 + (up > 0.5 && dots ? Math.round(Math.sin(y * 0.8 + x0) * (side ? -1 : 1)) : 0)
+      const tip = up > 0.8
+      if (tip && hash(x, y) < 0.4) continue
+      put(g, x, y, tip ? MOSS_TIP : mix(MOSS, ground, 0.15 * e), 96, 7200 + (tip ? 1 : 0))
+    }
+  }
+  // the film along the bottom of the glass: thick in clumps, thin between, ragged on top
+  const film = stage(0.25)
+  const sx = Math.floor((tank.t * SNAIL_SPEED * (dots ? 1 : 0.5)) % (W - 8)) + 3
+  const sy = H - (dots ? 4 : 3)
+  if (film > 0) for (let x = ew + 1; x < W - ew - 1; x += 1) {
+    const clump = 0.5 + 0.5 * Math.sin(x * (dots ? 0.11 : 0.22) + Math.sin(x * (dots ? 0.037 : 0.074)) * 3)
+    const fh = Math.round(film * (dots ? 5 : 2.5) * clump * (0.6 + 0.4 * hash(x, 2)))
+    for (let y = H - 1 - fh; y < H - 1; y += 1) {
+      if (x >= 3 && x < sx && Math.abs(y - sy) <= (dots ? 1 : 0)) continue // grazed behind the snail
+      const top = y === H - 1 - fh
+      if (top && hash(x, y) < 0.5) continue
+      put(g, x, y, mix(MOSS, ground, top ? 0.5 : 0.35), 9, 7210)
+    }
+  }
+  // a few clumps out on the glass, each starting at its own time
+  for (let c = 0; c < 4; c += 1) {
+    const size = stage(0.4 + c * 0.12) * (dots ? 3.2 : 1.6) * (0.7 + 0.5 * hash(c, 21))
+    if (size < 0.6) continue
+    const cx = Math.floor(W * (0.12 + 0.76 * hash(c, 23)))
+    const cy = Math.floor(H * (0.5 + 0.35 * hash(c, 29)))
+    const span = Math.ceil(size * 1.6)
+    for (let y = cy - span; y <= cy + span; y += 1) for (let x = cx - span; x <= cx + span; x += 1) {
+      const dx = (x - cx) / 1.2
+      const dy = y - cy
+      const a = Math.atan2(dy, dx)
+      const r = size * (0.75 + 0.3 * Math.sin(3 * a + c * 2) + 0.2 * Math.sin(5 * a + c)) // lumpy, not an oval
+      const d = Math.hypot(dx, dy) / r
+      if (d > 1 || hash(x, y) < d * d) continue // thinning toward the edge
+      put(g, x, y, mix(d < 0.5 ? MOSS_TIP : MOSS, ground, 0.45), 9, 7230)
+    }
+  }
+  // moss tufts on the stone and the driftwood (the decor's own geometry) and on the gravel
+  const tufts = stage(0.15)
+  const k = dots ? 1 : 0.5
+  const tuft = (x: number, y: number, chance: number, layer: number) => {
+    if (hash(x, 3) > chance) return
+    const tall = 1 + Math.floor(hash(x, 5) * (dots ? 3 : 1.6) * tufts)
+    for (let i = 0; i < tall; i += 1) put(g, x, y - i, i === tall - 1 ? MOSS_TIP : MOSS, layer, 7220 + (i === tall - 1 ? 1 : 0))
+  }
+  if (tufts > 0) {
+    const sx0 = Math.floor(W * 0.24)
+    const rw = 7 * k + 1
+    const rh = 3.4 * k + 1
+    for (let x = Math.floor(sx0 - rw); x <= sx0 + rw; x += 1) {
+      const u = (x - sx0) / rw
+      if (u * u >= 1) continue
+      tuft(x, Math.floor(H - 1 - rh * Math.sqrt(1 - u * u)), tufts * 0.9, 9)
+    }
+    const wx = Math.floor(W * 0.68)
+    const len = Math.round(16 * k)
+    for (let i = 0; i < len; i += 1) tuft(wx + i, H - 3 - Math.round((i / len) * 3 * k + Math.sin(i * 0.9) * 0.4), tufts * 0.8, 9)
+    for (let x = ew + 1; x < W - ew - 1; x += 1) tuft(x, H - (dots ? 3 : 2), tufts * 0.22, 61)
   }
 }
 
