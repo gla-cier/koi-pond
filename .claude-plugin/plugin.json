@@ -1,11 +1,21 @@
 {
   "name": "koi-pond",
-  "version": "0.1.15",
-  "description": "A braille koi pond across the band above the prompt: koi drift and fishtail while you type, dart while Claude works, settle to the bottom as the context window fills, and a ripple (with a bloop) marks each finished turn.",
+  "version": "0.2.0",
+  "description": "Koi across the band above the prompt: a pond seen from above, or a tank seen from the side. Koi swim while you type, dart while Claude works, rest as the context window fills, and come to eat when a turn finishes (with a bloop).",
   "author": {
     "name": "glacier"
   },
   "userConfig": {
+    "view": {
+      "type": "string",
+      "title": "View",
+      "description": "pond: koi from above, lily pads, food on the water. tank: koi from the side, gravel, weed and a bubbler, flakes sinking.",
+      "options": [
+        "pond",
+        "tank"
+      ],
+      "default": "pond"
+    },
     "sound": {
       "type": "boolean",
       "description": "Play a soft bloop when a turn finishes.",
@@ -21,17 +31,17 @@
     "fish": {
       "type": "string",
       "title": "Koi drawing",
-      "description": "dots: braille stipple (finer). blocks: solid quadrant blocks over braille water (bolder).",
+      "description": "pixels: half blocks, two colours a cell, steady markings. dots: braille, finer and stippled, one colour a cell.",
       "options": [
-        "dots",
-        "blocks"
+        "pixels",
+        "dots"
       ],
-      "default": "dots"
+      "default": "pixels"
     },
     "water": {
       "type": "string",
       "title": "Water",
-      "description": "clear: the terminal's own background. dots: a sparse field of dim blue dots.",
+      "description": "clear: the terminal's own background. dots: a sparse field of dim blue dots (pond).",
       "options": [
         "clear",
         "dots"

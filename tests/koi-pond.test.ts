@@ -67,15 +67,42 @@ test('the rows option sets the pond height', { options: { rows: 4 } }, async ($,
   await ui.unmount()
 })
 
-test('the fish option switches the koi to block glyphs', { options: { fish: 'blocks' } }, async ($, on) => {
+const glyphs = (pond: any) => {
+  const bytes = Uint8Array.from(atob(pond.props.cells), (c: string) => c.charCodeAt(0))
+  const words = new Uint32Array(bytes.buffer)
+  const out: number[][] = []
+  for (let k = 0; k < words.length; k += 3) out.push([words[k]!, words[k + 1]!, words[k + 2]!])
+  return out
+}
+
+test('the pond draws its koi in half blocks by default', async ($, on) => {
   on('ui.render', { component: 'AbovePrompt' }, emptyBand)
   const ui = await $.ui.mount({ plugin: 'koi-pond', surface: 'terminal', ...band({}) })
-  const pond = await ui.find({ type: 'Raster', key: 'pond' } as any)
-  expect(pond).toBeDefined()
-  const bytes = Uint8Array.from(atob((pond as any).props.cells), (c: string) => c.charCodeAt(0))
-  const words = new Uint32Array(bytes.buffer)
-  let block = 0
-  for (let k = 0; k < words.length; k += 3) if (words[k]! >= 0x2580 && words[k]! <= 0x259f) block += 1
-  expect(block > 0).toBe(true)
+  const cells = glyphs(await ui.find({ type: 'Raster', key: 'pond' } as any))
+  // koi in half blocks: some cells carry two colours, upper glyph over lower background
+  expect(cells.some(([g, , bg]) => g === 0x2580 && bg !== 0x01000000)).toBe(true)
+  expect(cells.some(([g]) => g >= 0x2800 && g <= 0x28ff)).toBe(false)
   await ui.unmount()
 })
+
+test('the fish option draws them in braille instead', { options: { fish: 'dots' } }, async ($, on) => {
+  on('ui.render', { component: 'AbovePrompt' }, emptyBand)
+  const ui = await $.ui.mount({ plugin: 'koi-pond', surface: 'terminal', ...band({}) })
+  const cells = glyphs(await ui.find({ type: 'Raster', key: 'pond' } as any))
+  expect(cells.some(([g]) => g > 0x2800 && g <= 0x28ff)).toBe(true)
+  expect(cells.every(([, , bg]) => bg === 0x01000000)).toBe(true) // braille keeps the terminal's background
+  await ui.unmount()
+})
+
+for (const fish of ['pixels', 'dots'] as const) {
+  test(`the tank view lays gravel along the bottom (${fish})`, { options: { view: 'tank', fish } }, async ($, on) => {
+    on('ui.render', { component: 'AbovePrompt' }, emptyBand)
+    const ui = await $.ui.mount({ plugin: 'koi-pond', surface: 'terminal', ...band({}) })
+    const pond = await ui.find({ type: 'Raster', key: 'pond' } as any)
+    const cells = glyphs(pond)
+    const cols = (pond as any).props.columns
+    const bottom = cells.slice(-cols)
+    expect(bottom.filter(([g]) => g !== 0x20).length).toBe(cols)
+    await ui.unmount()
+  })
+}
