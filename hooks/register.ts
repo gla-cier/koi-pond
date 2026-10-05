@@ -57,7 +57,7 @@ type Phase = 'idle' | 'working' | 'happy'
 type View = 'pond' | 'tank'
 type Draw = 'pixels' | 'dots'
 type Tier = { key: 'fresh' | 'drowsy' | 'asleep'; color: string }
-type Reading = { tokens: number; window: number; percent: number }
+type Reading = { tokens: number; window: number; percent: number; source: string }
 
 let rows = 6
 let sound = true
@@ -78,7 +78,7 @@ let rnd = mulberry32(0x9e3779b9)
 export const register: Register = (on, options) => {
   sound = options?.sound !== false
   view = options?.view === 'tank' ? 'tank' : 'pond'
-  draw = options?.fish === 'dots' ? 'dots' : 'pixels'
+  draw = options?.fish === 'pixels' ? 'pixels' : 'dots'
   waterDots = options?.water === 'dots'
   const wanted = Number(options?.rows)
   rows = Number.isFinite(wanted) ? Math.max(MIN_ROWS, Math.min(MAX_ROWS, Math.round(wanted))) : 6
@@ -88,6 +88,11 @@ export const register: Register = (on, options) => {
     phase = 'idle'
     frame = 0
     await takeReading($)
+    try {
+      await $.command.register({ name: 'koi', description: 'How full the koi think the context is, and against which window' })
+    } catch {
+      // the band still works without the command
+    }
     try {
       const theme = (await $.config.list()).find(row => row.key === 'theme')
       if (String(theme?.value ?? '').includes('light')) ground = 0xf7f7f5
@@ -105,6 +110,23 @@ export const register: Register = (on, options) => {
       void repaint($)
     })
     return result
+  })
+
+  // After a compaction the context is nearly empty again: read it now, so the
+  // koi wake and the tank lights up without waiting for the next turn to end.
+  on('session.compact', async ($, e, next) => {
+    const result = await next(e)
+    if (!e.agentId) await takeReading($)
+    return result
+  })
+
+  on('command.run', { command: 'koi' }, async $ => {
+    await takeReading($)
+    if (!reading) return { text: 'No context reading yet.' }
+    const k = (n: number) => `${Math.round(n / 1000)}k`
+    const tier = tierFor(reading.percent).key
+    const against = reading.source === 'model' ? "the model's whole window (no auto-compact window reported)" : `the auto-compact window (set by: ${reading.source})`
+    return { text: `${k(reading.tokens)} of ${k(reading.window)}, ${reading.percent}%: ${tier}. Measured against ${against}.` }
   })
 
   on('prompt.submit', ($, e, next) => {
@@ -1360,7 +1382,7 @@ function hasButton(tree: unknown): boolean {
 
 // ---- state ------------------------------------------------------------------
 
-type Context = { tokens?: number; window: number; percent?: number; breakdown?: { totalTokens: number; rawMaxTokens: number; percentage: number } }
+type Context = { tokens?: number; window: number; percent?: number; breakdown?: { totalTokens: number; rawMaxTokens: number; percentage: number; autocompactSource?: string } }
 // Measured against the compaction window when one is set (autoCompactWindow,
 // /autocompact): the window the session actually fills before it compacts, not
 // the model's whole limit. A summary breakdown is estimated locally, no request.
@@ -1370,12 +1392,12 @@ async function takeReading($: { session: { usage: (args?: { breakdown?: 'summary
     if (!context || !context.window) return
     const b = context.breakdown
     if (b && b.rawMaxTokens) {
-      reading = { tokens: b.totalTokens, window: b.rawMaxTokens, percent: Math.round(b.percentage) }
+      reading = { tokens: b.totalTokens, window: b.rawMaxTokens, percent: Math.round(b.percentage), source: b.autocompactSource ?? 'unknown' }
       return
     }
     const tokens = context.tokens ?? 0
     const percent = Math.round(context.percent ?? (tokens / context.window) * 100)
-    reading = { tokens, window: context.window, percent }
+    reading = { tokens, window: context.window, percent, source: 'model' }
   } catch {
     // keep the last reading
   }

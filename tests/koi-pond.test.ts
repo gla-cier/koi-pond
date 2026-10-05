@@ -75,7 +75,7 @@ const glyphs = (pond: any) => {
   return out
 }
 
-test('the pond draws its koi in half blocks by default', async ($, on) => {
+test('the pixels option draws the koi in half blocks', { options: { fish: 'pixels' } }, async ($, on) => {
   on('ui.render', { component: 'AbovePrompt' }, emptyBand)
   const ui = await $.ui.mount({ plugin: 'koi-pond', surface: 'terminal', ...band({}) })
   const cells = glyphs(await ui.find({ type: 'Raster', key: 'pond' } as any))
@@ -85,7 +85,7 @@ test('the pond draws its koi in half blocks by default', async ($, on) => {
   await ui.unmount()
 })
 
-test('the fish option draws them in braille instead', { options: { fish: 'dots' } }, async ($, on) => {
+test('the koi are drawn in braille by default', async ($, on) => {
   on('ui.render', { component: 'AbovePrompt' }, emptyBand)
   const ui = await $.ui.mount({ plugin: 'koi-pond', surface: 'terminal', ...band({}) })
   const cells = glyphs(await ui.find({ type: 'Raster', key: 'pond' } as any))

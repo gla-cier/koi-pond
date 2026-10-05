@@ -1,6 +1,6 @@
 {
   "name": "koi-pond",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Koi across the band above the prompt: a pond seen from above, or a tank seen from the side. Koi swim while you type, dart while Claude works, rest as the context window fills, and come to eat when a turn finishes (with a bloop).",
   "author": {
     "name": "glacier"
@@ -31,12 +31,12 @@
     "fish": {
       "type": "string",
       "title": "Koi drawing",
-      "description": "pixels: half blocks, two colours a cell, steady markings. dots: braille, finer and stippled, one colour a cell.",
+      "description": "dots: braille, finer and stippled, one colour a cell. pixels: half blocks, two colours a cell, steady markings.",
       "options": [
-        "pixels",
-        "dots"
+        "dots",
+        "pixels"
       ],
-      "default": "pixels"
+      "default": "dots"
     },
     "water": {
       "type": "string",
