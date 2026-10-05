@@ -1360,10 +1360,19 @@ function hasButton(tree: unknown): boolean {
 
 // ---- state ------------------------------------------------------------------
 
-async function takeReading($: { session: { usage: () => Promise<{ context: { tokens?: number; window: number; percent?: number } }> } }) {
+type Context = { tokens?: number; window: number; percent?: number; breakdown?: { totalTokens: number; rawMaxTokens: number; percentage: number } }
+// Measured against the compaction window when one is set (autoCompactWindow,
+// /autocompact): the window the session actually fills before it compacts, not
+// the model's whole limit. A summary breakdown is estimated locally, no request.
+async function takeReading($: { session: { usage: (args?: { breakdown?: 'summary' }) => Promise<{ context: Context }> } }) {
   try {
-    const { context } = await $.session.usage()
+    const { context } = await $.session.usage({ breakdown: 'summary' })
     if (!context || !context.window) return
+    const b = context.breakdown
+    if (b && b.rawMaxTokens) {
+      reading = { tokens: b.totalTokens, window: b.rawMaxTokens, percent: Math.round(b.percentage) }
+      return
+    }
     const tokens = context.tokens ?? 0
     const percent = Math.round(context.percent ?? (tokens / context.window) * 100)
     reading = { tokens, window: context.window, percent }
