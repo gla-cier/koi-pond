@@ -1249,7 +1249,7 @@ function feedTank() {
 // then night: lights out, a blue dark, the koi asleep on the gravel.
 function lightLevel(): number {
   const percent = reading?.percent ?? 0
-  return percent < 50 ? 1 : percent < 80 ? 1 - ((percent - 50) / 30) * 0.4 : 0.32
+  return percent < 50 ? 1 : percent < 80 ? 1 - ((percent - 50) / 30) * 0.6 : 0.32
 }
 
 // A koi seen face-on, the middle of a U-turn: round, two eyes, fins out each side.
