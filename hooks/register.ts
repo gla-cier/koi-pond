@@ -44,6 +44,7 @@ type Pattern = 'kohaku' | 'showa' | 'hiutsuri' | 'shiro' | 'ogon'
 type Fish = {
   x: number // head position in dots
   yBase: number // centre line the fish weaves around
+  home: number // the lane it is settling into: a centre line on a cell-row boundary
   L: number
   Hh: number
   dir: 1 | -1 // -1 swims left (head at the left), +1 swims right
@@ -63,7 +64,8 @@ type Dot = { x: number; y: number; lit: boolean; col: number }
 type Shape = { dots: Dot[]; base: number; colourAt: (x: number, y: number) => number }
 // A koi as drawn this frame: where its head is and which way it faces, so a
 // cell's colour can be read off the shape at the cell's centre.
-type Drawn = { dir: 1 | -1; hx: number; hy: number; shape: Shape; pattern: Pattern }
+// row is the cell row holding the back; the belly is the row below it.
+type Drawn = { dir: 1 | -1; hx: number; hy: number; row: number; turning: boolean; shape: Shape; pattern: Pattern }
 
 let rows = 6
 let sound = true
@@ -211,7 +213,8 @@ function resize(next: number) {
     const dir: 1 | -1 = i % 2 === 0 ? -1 : 1
     fish.push({
       x: Math.floor(W * ((i * 0.37 + 0.2) % 1)),
-      yBase: Math.max(Hh / 2 + 1, Math.min(H - Hh / 2 - 1, slot.lane * H)),
+      yBase: laneY(Math.round(slot.lane * H / 4 - 1)),
+      home: laneY(Math.round(slot.lane * H / 4 - 1)),
       L, Hh, dir,
       speed: 0.3 + rnd() * 0.3,
       phase: rnd() * Math.PI * 2,
@@ -240,6 +243,8 @@ function step() {
   const turnChance = (phase === 'working' ? 5 : 1) / 320
   for (const f of fish) {
     if (f.turning > 0) {
+      // the end-on oval glides across into its new lane during the turn
+      f.yBase += (f.home - f.yBase) / f.turning
       f.turning -= 1
       if (f.turning === 3) f.dir = f.dir === 1 ? -1 : 1
       continue
@@ -263,16 +268,48 @@ function step() {
     const nearEdge = (f.dir === -1 && f.x < margin) || (f.dir === 1 && f.x > W - margin)
     if (nearEdge || rnd() < turnChance) {
       f.turning = 6
+      f.home = laneY(uTurnRow(f))
     }
-    const lane = ROSTER[fish.indexOf(f) % ROSTER.length]?.lane ?? 0.5
-    const homeY = Math.max(f.Hh / 2 + 1, Math.min(H - f.Hh / 2 - 1, lane * H))
-    if (Math.abs(f.yBase - homeY) > 0.1) f.yBase += (homeY - f.yBase) * 0.02
+    if (Math.abs(f.yBase - f.home) > 0.1) f.yBase += (f.home - f.yBase) * 0.2
   }
   ripples = ripples.filter(r => frame - r.t0 < 9)
 }
 
-function fishY(f: Fish): number {
-  return f.yBase + f.amp * Math.sin(frame * f.wave + f.phase)
+// The cell row holding a koi's back when its centre line is at y, and back.
+function rowOf(y: number): number {
+  return Math.max(0, Math.min(rows - 2, Math.round(y / 4 - 1)))
+}
+
+function laneY(row: number): number {
+  return Math.max(0, Math.min(rows - 2, row)) * 4 + 4
+}
+
+// A U-turn comes out one lane over, like turning on a two-way road: up or down
+// a cell row, whichever has room, preferring the lane fewer koi are already
+// swimming the new way in.
+function uTurnRow(f: Fish): number {
+  const row = rowOf(f.home)
+  const heading = f.dir === 1 ? -1 : 1
+  const choices = [row - 1, row + 1].filter(r => r >= 0 && r <= rows - 2)
+  if (choices.length === 0) return row
+  const traffic = (r: number) => fish.filter(g => g !== f && g.dir === heading && Math.abs(rowOf(g.home) - r) < 2).length
+  const best = Math.min(...choices.map(traffic))
+  const open = choices.filter(r => traffic(r) === best)
+  return open[Math.floor(rnd() * open.length)]!
+}
+
+// Where a koi's head sits, in dots, and the cell row holding its back. The body
+// always fills the same two cell rows, so the back is one row of cells and the
+// belly the next however the fish moves, and a marking cannot creep between
+// them; the weave bobs it within whatever slack those eight dot rows leave.
+function fishY(f: Fish): { hy: number; row: number } {
+  const H = rows * 4
+  const hh = Math.round(f.Hh / 2)
+  const slack = Math.max(0, 8 - (2 * hh + 1))
+  const row = rowOf(f.yBase)
+  if (f.turning > 0) return { hy: Math.round(f.yBase), row } // the oval moves freely; its cells are not read off the mosaic
+  const bob = Math.round(slack * (0.5 + 0.5 * Math.sin(frame * f.wave + f.phase)))
+  return { hy: Math.min(H - 1, row * 4 + bob + hh), row }
 }
 
 function scene(): Int32Array {
@@ -310,8 +347,8 @@ function scene(): Int32Array {
     const full = koiShape(f.L, f.Hh, wag, f.pattern)
     const shape = squeeze < 1 ? foreshorten(full, squeeze, f.L, f.Hh) : full // a turn: a solid oval, shrinking then growing back
     const hx = Math.round(f.x)
-    const hy = Math.round(fishY(f))
-    drawn.push({ dir: f.dir, hx, hy, shape, pattern: f.pattern })
+    const { hy, row } = fishY(f)
+    drawn.push({ dir: f.dir, hx, hy, row, turning: squeeze < 1, shape, pattern: f.pattern })
     const id = drawn.length
     for (const d of shape.dots) {
       const X = f.dir === -1 ? hx + d.x : hx - d.x
@@ -372,20 +409,24 @@ function foreshorten(shape: Shape, s: number, L: number, Hh: number): Shape {
 // ---- varieties --------------------------------------------------------------
 
 const BASE: Record<Pattern, number> = { kohaku: COL.white, showa: COL.orange, hiutsuri: COL.black, shiro: COL.white, ogon: COL.gold }
+const MARK: Record<Pattern, number> = { kohaku: COL.orange, showa: COL.black, hiutsuri: COL.orange, shiro: COL.black, ogon: COL.gold }
 
-// A patch hanging from the back, as koi markings do: pinched to the dorsal edge
-// at both ends, deepest in the middle. t runs 0..1 along the body, u -1..1 from
-// back to belly; depth 1 wraps the whole body, 0.5 reaches the centre line.
-function saddle(t: number, u: number, t0: number, t1: number, depth: number, slant = 0): boolean {
-  const tt = t + slant * u
-  if (tt < t0 || tt > t1) return false
-  const p = (tt - t0) / (t1 - t0)
-  return u <= -1 + 2 * depth * Math.sin(Math.PI * p) ** 0.6
+// Markings are authored in whole cells, because a cell carries one colour: a
+// marking drawn finer than a cell is resampled as the fish slides a dot at a
+// time and flickers. A koi's body always sits in two cell rows (see scene), so
+// a variety is a two-row mosaic, back over belly, one character per cell column
+// from the head: 'x' the marking, '.' the ground.
+const MOSAIC: Record<Pattern, [string, string]> = {
+  kohaku: ['.xx.xx.x.', '.........'], // sandan: three red steps along the back
+  showa: ['.x..x.xx.', '....x..x.'], // menware on the head, a wrap, a saddle that reaches the belly
+  hiutsuri: ['.xx.xxx.', '.x...xx.'], // two orange wraps on black
+  shiro: ['.x.xx.x.', '...x..x.'], // shiro utsuri: black head stroke and wraps on white
+  ogon: ['', ''],
 }
 
-// The colour of a variety at a point in the fish's frame. Read per dot when the
-// shape is built and again per cell at the cell's centre, so a marking is one
-// steady shape that travels with the fish.
+// The colour of a variety at a dot in the fish's frame, read off the mosaic.
+// Cells inside the body read the mosaic directly (cellsFor); this serves the
+// dots themselves, the fins and the turning oval.
 function varietyPaint(pattern: Pattern, L: number, Hh: number): (x: number, y: number) => number {
   const half = Hh / 2
   const bodyL = L * 0.7
@@ -394,30 +435,17 @@ function varietyPaint(pattern: Pattern, L: number, Hh: number): (x: number, y: n
   const wraps = pattern === 'showa' || pattern === 'shiro'
   return (x, y) => {
     if (Math.abs(y) > half) return wraps && x >= fx + 1 && x <= fx + 3 ? COL.black : base // pectoral fins; motoguro at the root
-    const t = x / bodyL
-    const u = y / half
-    if (t > 1) return base // the tail
-    switch (pattern) {
-      case 'kohaku': {
-        const hit = bodyL < 20
-          ? saddle(t, u, 0.08, 0.4, 0.7) || saddle(t, u, 0.52, 0.92, 0.75) // nidan: two steps on a small fish
-          : saddle(t, u, 0.06, 0.3, 0.55) || saddle(t, u, 0.4, 0.64, 0.85) || saddle(t, u, 0.72, 0.95, 0.6) // sandan
-        return hit ? COL.orange : base
-      }
-      case 'showa': {
-        const stripe = t + 0.25 * u >= 0.1 && t + 0.25 * u <= 0.17 && u <= 0.35 // menware: the stripe down the head
-        return stripe || saddle(t, u, 0.38, 0.52, 1, 0.1) || saddle(t, u, 0.7, 0.84, 1, 0.1) ? COL.black : base
-      }
-      case 'shiro': {
-        const stripe = t + 0.25 * u >= 0.1 && t + 0.25 * u <= 0.17 && u <= 0.35
-        return stripe || saddle(t, u, 0.36, 0.52, 1, 0.1) || saddle(t, u, 0.7, 0.86, 1, 0.1) ? COL.black : base
-      }
-      case 'hiutsuri':
-        return saddle(t, u, 0.12, 0.36, 0.8) || saddle(t, u, 0.52, 0.82, 0.95) ? COL.orange : base
-      default:
-        return base
-    }
+    if (x > bodyL) return base // the tail
+    return mosaicAt(pattern, Math.floor(x / 2), y <= 0 ? 0 : 1) ?? base
   }
+}
+
+// One cell of a variety's mosaic, or null past the body.
+function mosaicAt(pattern: Pattern, k: number, rank: number): number | null {
+  const row = MOSAIC[pattern][rank]
+  if (pattern === 'ogon') return COL.gold
+  if (row === undefined || k < 0 || k >= row.length) return null
+  return row[k] === 'x' ? MARK[pattern] : BASE[pattern]
 }
 
 // A koi facing left, head at the origin, body along +x. Unlit dots are the eye
@@ -517,19 +545,15 @@ function cellsFor(): string {
       let col = DEFAULT
       if (counts.size > 0) {
         bits = fishBits // water dots do not show through a koi's cell
-        if (top > 0 && top < PAD) {
-          // one colour per cell: read the koi's pattern at the cell's centre, so a
-          // marking is a steady shape that travels with the fish instead of a
-          // count of dots that flips as the fish crosses cell boundaries
-          const d = drawn[top - 1]!
-          const cxDot = cx * 2 + 0.5
-          const cyDot = cy * 4 + 1.5
-          const lx = d.dir === -1 ? cxDot - d.hx : d.hx - cxDot
-          const ly = cyDot - d.hy
-          col = d.shape.colourAt(lx, ly)
-        } else {
-          col = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]![0]
-        }
+        const d = top > 0 && top < PAD ? drawn[top - 1] : undefined
+        // one colour per cell: a body cell reads the koi's mosaic by the cell's
+        // column from the head (the even one of its two dot columns, so each
+        // mosaic column lands in exactly one cell) and by back or belly row.
+        // Fins, tail and the turning oval take their dots' commonest colour.
+        const a = d ? (d.dir === -1 ? cx * 2 - d.hx : d.hx - cx * 2) : 0
+        const lx = a % 2 === 0 ? a : d?.dir === -1 ? a + 1 : a - 1
+        const cell = d && !d.turning ? mosaicAt(d.pattern, lx / 2, cy - d.row) : null
+        col = cell ?? [...counts.entries()].sort((a, b) => b[1] - a[1])[0]![0]
       } else if (bits) {
         col = (bits & ~waterMask(buf, W, cx, cy)) ? COL.ripple : COL.water
       }
