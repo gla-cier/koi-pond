@@ -104,9 +104,7 @@ export const register: Register = (on, options) => {
       frame += 1
       if (phase === 'happy' && frame >= happyUntil) phase = 'idle'
       if (!mounted || cols === 0) return
-      const resting = tierFor(reading?.percent ?? 0).key === 'asleep' && phase === 'idle' && !busy()
-      if (resting && frame % 4 !== 0) return // a resting pond breathes slower
-      step(resting ? DT * 4 : DT)
+      step(DT) // full rate asleep too: the moon shimmers, the dragonfly flies, a sleeper drifts
       void repaint($)
     })
     return result
@@ -181,7 +179,9 @@ export const register: Register = (on, options) => {
     resize(Math.max(20, Math.min(512, bodyColumns - 2)))
     requestId = e.requestId
     mounted = true
-    return Box({ flexDirection: 'row', paddingX: 1, children: [
+    // one blank row under the water, between the band and the token counter, where there's room
+    const gap = (e.props.maxRows ?? 1) >= rows + 1 ? 1 : 0
+    return Box({ flexDirection: 'row', paddingX: 1, paddingBottom: gap, children: [
       Raster({ key: 'pond', columns: cols, rows, cells: cellsFor() }),
     ] })
   })
@@ -211,10 +211,6 @@ function step(dt: number) {
 function feed() {
   if (view === 'pond') feedPond()
   else feedTank()
-}
-
-function busy(): boolean {
-  return view === 'pond' ? pond.ripples.length > 0 || pond.pellets.length > 0 : tank.flakes.length > 0
 }
 
 const mix = (a: number, b: number, t: number): number => {
@@ -366,11 +362,16 @@ type PondKoi = {
   turned: number
   surfaced: boolean
   trail: [number, number][] // the head's wake, oldest first, half a dot apart
+  bed: number // which pad this koi sleeps under, and on which side
 }
 type Pellet = { x: number; y: number; age: number }
 type Ripple = { x: number; y: number; age: number }
+type Drop = { x: number; y: number; age: number }
+type Fly = { mode: 'away' | 'in' | 'perched' | 'out'; x: number; y: number; tx: number; ty: number; wait: number; th: number }
 
-const pond = { fish: [] as PondKoi[], pellets: [] as Pellet[], ripples: [] as Ripple[], t: 0 }
+// wet: how hard it is raining, eased 0..1; ct: the caustics' own clock
+const pond = { fish: [] as PondKoi[], pellets: [] as Pellet[], ripples: [] as Ripple[], drops: [] as Drop[], t: 0, rainAcc: 0, wet: 0, ct: 0 }
+const fly: Fly = { mode: 'away', x: -10, y: 4, tx: 0, ty: 0, wait: 4, th: 0 }
 // The order the pond fills as the band widens.
 const POND_ROSTER: TopVariety[] = ['kohaku', 'showa', 'tancho', 'shiro', 'ogon', 'hiutsuri']
 
@@ -443,6 +444,7 @@ function resizePond(prev: number) {
       turned: 0,
       surfaced: false,
       trail: [],
+      bed: i,
     }
     f.trail = straightTrail(f)
     pond.fish.push(f)
@@ -468,6 +470,22 @@ function stepPond(dt: number) {
     q.x += Math.sin(pond.t * 0.7 + q.y) * 0.4 * dt
   }
   pond.pellets = pond.pellets.filter(q => q.age < 30)
+  // rain on the pond while Claude works
+  const W = cols * 2
+  const H = rows * 4
+  if (phase === 'working') {
+    pond.rainAcc += (dt * (W * H)) / 900 // drops a second, by the pond's area
+    while (pond.rainAcc >= 1) {
+      pond.rainAcc -= 1
+      pond.drops.push({ x: rnd() * W, y: rnd() * H, age: 0 })
+    }
+  }
+  pond.drops = pond.drops.filter(d => (d.age += dt) < 0.9)
+  // the caustics keep their own clock: slow and calm, quicker in rain, easing
+  // between; half blocks are coarser, so their clock runs slower to look as calm
+  pond.wet += ((phase === 'working' ? 1 : 0) - pond.wet) * Math.min(1, dt * 0.8)
+  pond.ct += dt * (draw === 'dots' ? 1 : 0.45) * (1 + 1.25 * pond.wet)
+  stepFly(dt)
 }
 
 function swim(f: PondKoi, h: number) {
@@ -487,7 +505,20 @@ function swim(f: PondKoi, h: number) {
     }
   }
   if (factor === 0) {
-    f.depthTo = 0.7 // resting: sink and hang still
+    f.depthTo = 0.7 // resting: sink, and drift slow as a leaf to sleep under a pad
+    const ps = padsFor()
+    const p = ps[f.bed % ps.length]!
+    const side = Math.floor(f.bed / ps.length) % 2 // koi share a pad two by two, one each side
+    const gx = p[0] + (side ? 9 : -9) - f.x
+    const gy = p[1] + (side ? 2 : -2) - f.y
+    const d = Math.hypot(gx, gy)
+    if (d > 1.5) {
+      let turn = Math.atan2(gy, gx) - f.th
+      while (turn > Math.PI) turn -= 2 * Math.PI
+      while (turn < -Math.PI) turn += 2 * Math.PI
+      f.th += Math.max(-1.2 * h, Math.min(1.2 * h, turn))
+      v = Math.min(4, d * 0.3)
+    }
   } else if (f.uturn) {
     v *= 1.5 // a koi powers through a turn
     f.th += f.uturn * (v / 5) * h
@@ -546,7 +577,8 @@ function swim(f: PondKoi, h: number) {
     if (f.trail.length > 120) f.trail.splice(0, f.trail.length - 120)
   }
   if (factor > 0 && rnd() < h / 14) f.depthTo = rnd() < 0.25 ? 0 : rnd() * 0.7
-  f.depth += (f.depthTo - f.depth) * Math.min(1, h * 0.5)
+  if (phase === 'working') f.depthTo = Math.max(f.depthTo, 0.5) // in the rain the koi keep deeper
+  f.depth +=(f.depthTo - f.depth) * Math.min(1, h * 0.5)
   if (f.depth < 0.04 && !f.surfaced) {
     f.surfaced = true // rising to the surface leaves a ring
     pond.ripples.push({ x: f.x, y: f.y, age: 0.4 })
@@ -663,6 +695,10 @@ function paintPond(g: Grid) {
   if (waterDots) {
     for (let y = 2; y < H; y += 8) for (let x = (y * 3) % 8; x < W; x += 8) put(g, Math.floor(x / s), Math.floor(y / s), COL.water, L_WATER, 4000)
   }
+  const light = lightLevel() // the tank's curve: the pond dims as the context fills
+  const night = Math.max(0, Math.min(1, (0.75 - light) / 0.35)) // 0 lit .. 1 night
+  caustics(g, s, light, night)
+  if (night > 0) moon(g, s, night)
   // deepest first, so a koi nearer the surface passes over
   const order = [...pond.fish].sort((a, b) => b.depth - a.depth || a.L - b.L)
   order.forEach((f, z) => {
@@ -686,9 +722,7 @@ function paintPond(g: Grid) {
     }
   })
   // lily pads float over the koi
-  const pads: [number, number, number, boolean][] = [[W - 17, 7, 5.6, true], [13, H - 7, 5, false]]
-  if (W > 110) pads.push([Math.floor(W * 0.46), H - 7, 5.4, true])
-  for (const [cx, cy, r, flower] of pads) {
+  for (const [cx, cy, r, flower] of padsFor()) {
     for (let gy = Math.floor((cy - r) / s); gy <= Math.ceil((cy + r) / s); gy += 1) {
       for (let gx = Math.floor((cx - 1.1 * r) / s); gx <= Math.ceil((cx + 1.1 * r) / s); gx += 1) {
         const x = (gx + 0.5) * s - cx
@@ -697,8 +731,9 @@ function paintPond(g: Grid) {
         const ang = Math.atan2(y, x)
         if (Math.abs(ang) < 0.32 && x > 0) continue // the notch, a wedge to the centre
         let c = Math.abs(Math.sin(ang * 4)) < 0.18 ? COL.padDark : COL.pad // veins
-        if (flower && (x + 0.35 * r) ** 2 + (y + 0.2 * r) ** 2 < (0.38 * r) ** 2) c = COL.flower
-        put(g, gx, gy, c, L_PAD, c === COL.flower ? 1001 : 1000)
+        const bloom = 0.38 - 0.2 * night // at night the flower closes to a bud
+        if (flower && (x + 0.35 * r) ** 2 + (y + 0.2 * r) ** 2 < (bloom * r) ** 2) c = night > 0.5 ? NIGHT_COL.bud : COL.flower
+        put(g, gx, gy, c, L_PAD, c === COL.flower || c === NIGHT_COL.bud ? 1001 : 1000)
       }
     }
   }
@@ -709,7 +744,35 @@ function paintPond(g: Grid) {
     for (let a = 0; a < 360; a += 4) {
       const x = r.x + rad * Math.cos((a * Math.PI) / 180)
       const y = r.y + rad * Math.sin((a * Math.PI) / 180)
-      putEmpty(g, Math.floor(x / s), Math.floor(y / s), c, L_RIPPLE, 3000)
+      const gx = Math.floor(x / s)
+      const gy = Math.floor(y / s)
+      if (gx >= 0 && gy >= 0 && gx < g.w && gy < g.h && g.layer[gy * g.w + gx] === L_MOON) put(g, gx, gy, c, L_RIPPLE, 3000) // rings cross the moon's reflection
+      else putEmpty(g, gx, gy, c, L_RIPPLE, 3000)
+    }
+  }
+  for (const d of pond.drops) {
+    // a raindrop: a dot, then a ring that widens and fades, on the surface over the koi
+    if (d.age < 0.12) {
+      put(g, Math.floor(d.x / s), Math.floor(d.y / s), NIGHT_COL.drop, L_RIPPLE, 3001)
+      continue
+    }
+    const c = mix(ground, NIGHT_COL.rain, 0.95 - d.age * 0.85)
+    const rad = 1 + d.age * (s === 1 ? 10 : 9)
+    for (let a = 0; a < 360; a += s === 1 ? 10 : 20) {
+      const x = d.x + rad * Math.cos((a * Math.PI) / 180)
+      const y = d.y + rad * Math.sin((a * Math.PI) / 180) * 0.8
+      put(g, Math.floor(x / s), Math.floor(y / s), c, L_RIPPLE, 3001)
+    }
+  }
+  if (fly.mode !== 'away') dragonfly(g, s)
+  if (light < 1) {
+    // dusk to night: everything darkens toward a night blue, but for the moon and
+    // its light, which are drawn for the night already, and the dragonfly, dimmed less
+    for (let i = 0; i < g.col.length; i += 1) {
+      const c = g.col[i]!
+      const k = g.key[i]!
+      if (c < 0 || k === KEY_MOON || k === KEY_GLINT || k === KEY_CAUSTIC) continue
+      g.col[i] = k === KEY_FLY || k === KEY_WING ? mix(c, ground, (1 - light) * 0.4) : mix(ground, mix(c, 0x1a2c4a, (1 - light) * 0.55), 0.25 + light * 0.75)
     }
   }
 }
@@ -722,6 +785,145 @@ function feedPond() {
   pond.ripples.push({ x, y, age: 0 })
   for (let i = 0; i < 5; i += 1) {
     pond.pellets.push({ x: x + (rnd() - 0.5) * 10, y: Math.max(2, Math.min(H - 2, y + (rnd() - 0.5) * 6)), age: 0 })
+  }
+}
+
+// ---- the pond's weather: night, rain, caustics and a dragonfly ----------------------
+
+const NIGHT_COL = { bud: 0xc77d92, drop: 0xb8dcea, rain: 0x8cc4dc, moon: 0xe9e6d2, glint: 0xb9c2c8, moonlit: 0xa8b8c8, daylight: 0x3f7488, wing: 0xd6e8ef }
+const KEY_CAUSTIC = 4100
+const KEY_MOON = 7700
+const KEY_GLINT = 7701
+const KEY_FLY = 7800
+const KEY_WING = 7801
+// The moon's reflection is on the surface, so a koi passes under it: above the
+// koi, below pads, food and rings.
+const L_MOON = 75
+// Above everything: braille shows only a cell's top layer, so the dragonfly wins
+// its cells whole, wings included; the body a layer up, so it stays blue.
+const L_FLY = 98
+
+// [x, y, radius, flowering], in dots
+function padsFor(): [number, number, number, boolean][] {
+  const W = cols * 2
+  const H = rows * 4
+  const pads: [number, number, number, boolean][] = [[W - 17, 7, 5.6, true], [13, H - 7, 5, false]]
+  if (W > 110) pads.push([Math.floor(W * 0.46), H - 7, 5.4, true])
+  return pads
+}
+
+// In open water between the pads, clear of where the koi sleep.
+const moonAt = (): [number, number] => [cols * 2 * 0.64, rows * 4 * 0.42]
+
+// Light on the pond floor: the bright seams where three slow waves meet, under
+// the koi. By moonlight they turn silver and faint, strongest beneath the moon.
+function caustics(g: Grid, s: number, light: number, night: number) {
+  const t = pond.ct
+  const [mx, my] = moonAt()
+  const day = mix(ground, NIGHT_COL.daylight, s === 1 ? 0.22 + 0.18 * light : 0.14 + 0.12 * light)
+  for (let gy = 0; gy < g.h; gy += 1) {
+    for (let gx = 0; gx < g.w; gx += 1) {
+      const x = (gx + 0.5) * s
+      const y = (gy + 0.5) * s
+      const v = Math.sin(x * 0.21 + t * 0.6) + Math.sin(y * 0.37 - t * 0.45 + x * 0.08) + Math.sin((x + y) * 0.13 + t * 0.35)
+      if (Math.abs(v - 0.9) >= (s === 1 ? 0.07 : 0.045)) continue
+      let c = day
+      if (night > 0) {
+        const near = Math.exp(-Math.hypot((x - mx) * 0.6, y - my) / 14)
+        c = mix(day, mix(ground, NIGHT_COL.moonlit, (s === 1 ? 0.14 : 0.09) + (s === 1 ? 0.3 : 0.22) * near), night)
+      }
+      put(g, gx, gy, c, 1, KEY_CAUSTIC)
+    }
+  }
+}
+
+// The moon on the water: a pale oval, broken into slivers by the ripples.
+function moon(g: Grid, s: number, night: number) {
+  const [cx, cy] = moonAt()
+  const rx = 7.5
+  const ry = 5
+  const bright = mix(ground, NIGHT_COL.moon, 0.35 + 0.55 * night)
+  const dim = mix(ground, NIGHT_COL.glint, 0.2 + 0.35 * night)
+  for (let gy = Math.floor((cy - ry - 3) / s); gy <= Math.ceil((cy + ry + 3) / s); gy += 1) {
+    for (let gx = Math.floor((cx - rx - 8) / s); gx <= Math.ceil((cx + rx + 8) / s); gx += 1) {
+      const x = (gx + 0.5) * s
+      const y = (gy + 0.5) * s
+      const u = (x + Math.sin(y * 1.3 + pond.t * 1.6) * 0.9 - cx) / rx
+      const v = (y - cy) / ry
+      const rr = u * u + v * v
+      if (rr < 1) put(g, gx, gy, rr < 0.45 ? bright : mix(bright, ground, 0.35), L_MOON, KEY_MOON)
+      else if (Math.abs(v) < 1.2 && u * u < 3.2 && Math.sin(y * 2.1 + pond.t * 2 + x * 0.4) > 0.55) put(g, gx, gy, dim, L_MOON, KEY_GLINT) // glints trailing off
+    }
+  }
+}
+
+// Every 10 to 25 seconds a dragonfly darts in, perches on a pad, and darts off.
+function stepFly(dt: number) {
+  const W = cols * 2
+  const H = rows * 4
+  if (fly.mode === 'away') {
+    fly.wait -= dt
+    if (fly.wait > 0) return
+    const pads = padsFor()
+    const p = pads[Math.floor(rnd() * pads.length)]!
+    fly.x = rnd() < 0.5 ? -6 : W + 6
+    fly.y = 2 + rnd() * (H - 4)
+    fly.tx = p[0] + (rnd() - 0.5) * p[2]
+    fly.ty = p[1] + (rnd() - 0.5) * p[2] * 0.6
+    fly.mode = 'in'
+    return
+  }
+  if (fly.mode === 'perched') {
+    fly.wait -= dt
+    if (fly.wait <= 0) {
+      fly.mode = 'out'
+      fly.tx = rnd() < 0.5 ? -10 : W + 10
+      fly.ty = rnd() * H
+    }
+    return
+  }
+  // dart, hang in the air, dart again
+  const dx = fly.tx - fly.x
+  const dy = fly.ty - fly.y
+  const d = Math.hypot(dx, dy)
+  const v = 28 * (Math.sin(pond.t * 5) > -0.3 ? 1 : 0.1)
+  fly.th = Math.atan2(dy, dx)
+  if (d < v * dt + 0.3) {
+    fly.x = fly.tx
+    fly.y = fly.ty
+    fly.mode = fly.mode === 'in' ? 'perched' : 'away'
+    fly.wait = fly.mode === 'perched' ? 3 + rnd() * 4 : 10 + rnd() * 14
+    return
+  }
+  fly.x += (dx / d) * v * dt
+  fly.y += (dy / d) * v * dt + Math.sin(pond.t * 9) * 0.6 * dt
+}
+
+// A dragonfly from above: a long blue body, four glassy wings.
+function dragonfly(g: Grid, s: number) {
+  const L = s === 1 ? 7 : 6
+  const flying = fly.mode !== 'perched'
+  const cx = Math.cos(fly.th)
+  const sy = Math.sin(fly.th)
+  const flick = flying ? Math.sin(pond.t * 60) : fly.wait % 1.4 < 0.12 ? 1 : 0 // perched, a flick now and then
+  const wing = mix(ground, NIGHT_COL.wing, flying ? 0.62 : 0.75)
+  for (let k = 0; k <= L; k += 1) {
+    const x = fly.x - cx * k * (s === 1 ? 1 : 1.2)
+    const y = fly.y - sy * k * (s === 1 ? 1 : 1.2)
+    put(g, Math.floor(x / s), Math.floor(y / s), k <= 1 ? 0x2e7d9a : k < 3 ? 0x3d9ec0 : 0x4bb3d6, L_FLY + 1, KEY_FLY)
+  }
+  const bx = fly.x - cx * 2.2
+  const by = fly.y - sy * 2.2
+  for (const side of [-1, 1]) {
+    for (const [back, len] of [[0, 4.5], [1.6, 4]] as [number, number][]) {
+      const sweep = 0.35 * side * (flick > 0 ? 1 : 0.6)
+      for (let k = 1; k <= len; k += 1) {
+        const ox = -sy * side * k + cx * (sweep * k - back)
+        const oy = cx * side * k + sy * (sweep * k - back)
+        put(g, Math.floor((bx + ox) / s), Math.floor((by + oy) / s), wing, L_FLY, KEY_WING)
+        if (s === 1) put(g, Math.floor(bx + ox - cx * 0.9), Math.floor(by + oy - sy * 0.9), wing, L_FLY, KEY_WING) // two dots deep, so a wing holds its cell
+      }
+    }
   }
 }
 
@@ -749,6 +951,8 @@ type TankKoi = {
   turning: number // seconds left in a turn
   task: 'swim' | 'forage' | 'gulp'
   taskT: number
+  drift: number // seconds left in a sleeping drift
+  driftV: number
 }
 type Part = 'body' | 'fin' | 'tail'
 type SideDot = { x: number; y: number; part: Part | 'eye' }
@@ -756,9 +960,10 @@ type Flake = { x: number; y: number; age: number; settled: number }
 type Bubble = { x: number; y: number; wob: number; size: number }
 type Pop = { x: number; age: number }
 type Puff = { x: number; y: number; vx: number; vy: number; age: number }
+type Splash = { x: number; age: number }
 
 const SNAIL_SPEED = 1.2 // columns a second, in dots
-const tank = { fish: [] as TankKoi[], flakes: [] as Flake[], bubbles: [] as Bubble[], pops: [] as Pop[], puffs: [] as Puff[], t: 0, nextBubble: 0 }
+const tank = { fish: [] as TankKoi[], flakes: [] as Flake[], bubbles: [] as Bubble[], pops: [] as Pop[], puffs: [] as Puff[], splashes: [] as Splash[], t: 0, nextBubble: 0 }
 const TURN_S = 1.5
 
 // The roster, in the order the tank fills as the band widens; sizes in dots.
@@ -995,6 +1200,8 @@ function resizeTank(prev: number) {
       turning: 0,
       task: 'swim',
       taskT: 0,
+      drift: 0,
+      driftV: 0,
     })
   }
   if (tank.fish.length > want) tank.fish = tank.fish.slice(0, want)
@@ -1032,6 +1239,17 @@ function stepTank(dt: number) {
       // resting: sink gently to the gravel and hold still
       const floor = H - f.Hh / 2 - (snap() ? 3 : 2)
       if (f.yBase < floor) f.yBase = Math.min(floor, f.yBase + 2 * dt)
+      // asleep: now and then a koi drifts a little along the gravel and lets one bubble go
+      if (f.yBase >= floor - 0.5) {
+        if (f.drift > 0) {
+          f.drift -= dt
+          f.x = Math.max(4, Math.min(W - 4, f.x + f.driftV * dt))
+        } else if (rnd() < dt / 9) {
+          f.drift = 2.5
+          f.driftV = (rnd() < 0.5 ? -1 : 1) * (snap() ? 1.2 : 0.6)
+          tank.bubbles.push({ x: f.x - f.dir, y: fishCentre(f) - 1, wob: rnd() * 6, size: 1 })
+        }
+      }
       continue
     }
     // food: the nearest flake ahead draws a koi up or down to it
@@ -1120,6 +1338,8 @@ function stepTank(dt: number) {
     p.vy += 3 * dt
   }
   tank.puffs = tank.puffs.filter(p => p.age < 1.2)
+  for (const p of tank.splashes) p.age += dt
+  tank.splashes = tank.splashes.filter(p => p.age < 0.9)
 }
 
 function fishCentre(f: TankKoi): number {
@@ -1185,6 +1405,7 @@ function paintTank(g: Grid) {
     put(g, Math.round(p.x) + s, 1, 0xc4e3f0, 96, 5101)
   }
   for (const p of tank.puffs) put(g, Math.round(p.x), Math.round(p.y), GRAVEL[2]!, 59, 6001)
+  splashes(g)
   // koi, furthest from the glass first, then smaller before bigger
   const order = [...tank.fish].sort((a, b) => b.depth - a.depth || a.L - b.L)
   const factor = speedFactor()
@@ -1263,6 +1484,27 @@ function feedTank() {
   const W = tankW()
   const x = 10 + rnd() * Math.max(1, W - 20)
   for (let i = 0; i < 5; i += 1) tank.flakes.push({ x: x + (rnd() - 0.5) * (snap() ? 14 : 7), y: 1, age: rnd() * 0.5, settled: 0 })
+  tank.splashes.push({ x, age: 0 })
+}
+
+// Food landing: a dimple in the surface, droplets thrown out and falling back,
+// and a ring spreading either way.
+function splashes(g: Grid) {
+  const k = snap() ? 2 : 1
+  for (const p of tank.splashes) {
+    const x = Math.round(p.x)
+    const a = p.age
+    if (a < 0.25) put(g, x, 0, 0x0e2230, 96, 5110) // the dimple
+    if (a < 0.5) for (const side of [-1, 0, 1]) {
+      const dx = Math.round(side * (0.5 + a * 7 * k))
+      const dy = Math.max(0, Math.round(-1 + a * a * 18 * k)) // up, then back down
+      put(g, x + dx, Math.min(2 * k, dy), 0xe8f6fb, 96, 5111)
+    }
+    const r = Math.round(1 + a * 10 * k)
+    const fade = mix(0xc4e3f0, ground, Math.min(1, a / 0.9))
+    put(g, x - r, 1, fade, 96, 5112)
+    put(g, x + r, 1, fade, 96, 5112)
+  }
 }
 
 // ---- the tank's light, decor, glass and snail ----------------------------------

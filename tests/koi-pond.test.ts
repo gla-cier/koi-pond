@@ -67,6 +67,17 @@ test('the rows option sets the pond height', { options: { rows: 4 } }, async ($,
   await ui.unmount()
 })
 
+test('a blank row sits under the band when there is room for it', async ($, on) => {
+  on('ui.render', { component: 'AbovePrompt' }, emptyBand)
+  for (const [maxRows, gap] of [[8, 1], [6, 0]] as const) {
+    const ui = await $.ui.mount({ plugin: 'koi-pond', surface: 'terminal', ...band({ maxRows }) })
+    const box = await ui.find({ type: 'Box' } as any)
+    expect((box as any).props.paddingBottom).toBe(gap)
+    expect((await ui.find({ type: 'Raster', key: 'pond' } as any) as any).props.rows).toBe(6)
+    await ui.unmount()
+  }
+})
+
 const glyphs = (pond: any) => {
   const bytes = Uint8Array.from(atob(pond.props.cells), (c: string) => c.charCodeAt(0))
   const words = new Uint32Array(bytes.buffer)
