@@ -105,4 +105,17 @@ for (const fish of ['pixels', 'dots'] as const) {
     expect(bottom.filter(([g]) => g !== 0x20).length).toBe(cols)
     await ui.unmount()
   })
+
+  test(`the tank has glass at both ends (${fish})`, { options: { view: 'tank', fish } }, async ($, on) => {
+    on('ui.render', { component: 'AbovePrompt' }, emptyBand)
+    const ui = await $.ui.mount({ plugin: 'koi-pond', surface: 'terminal', ...band({}) })
+    const pond = await ui.find({ type: 'Raster', key: 'pond' } as any)
+    const cells = glyphs(pond)
+    const cols = (pond as any).props.columns
+    for (let r = 0; r < cells.length / cols; r += 1) {
+      expect(cells[r * cols]![0]).not.toBe(0x20)
+      expect(cells[r * cols + cols - 1]![0]).not.toBe(0x20)
+    }
+    await ui.unmount()
+  })
 }

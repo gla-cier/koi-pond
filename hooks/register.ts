@@ -725,13 +725,18 @@ type TankKoi = {
   wave: number
   depth: number // how far from the glass: dimmer and behind
   turning: number // seconds left in a turn
+  task: 'swim' | 'forage' | 'gulp'
+  taskT: number
 }
 type Part = 'body' | 'fin' | 'tail'
 type SideDot = { x: number; y: number; part: Part | 'eye' }
 type Flake = { x: number; y: number; age: number; settled: number }
-type Bubble = { x: number; y: number; wob: number }
+type Bubble = { x: number; y: number; wob: number; size: number }
+type Pop = { x: number; age: number }
+type Puff = { x: number; y: number; vx: number; vy: number; age: number }
 
-const tank = { fish: [] as TankKoi[], flakes: [] as Flake[], bubbles: [] as Bubble[], t: 0, nextBubble: 0 }
+const SNAIL_SPEED = 1.2 // columns a second, in dots
+const tank = { fish: [] as TankKoi[], flakes: [] as Flake[], bubbles: [] as Bubble[], pops: [] as Pop[], puffs: [] as Puff[], t: 0, nextBubble: 0 }
 const TURN_S = 1.5
 
 // The roster, in the order the tank fills as the band widens; sizes in dots.
@@ -966,6 +971,8 @@ function resizeTank(prev: number) {
       wave: 0.5 + rnd() * 0.5,
       depth: i === 0 ? 0 : rnd() * 0.35,
       turning: 0,
+      task: 'swim',
+      taskT: 0,
     })
   }
   if (tank.fish.length > want) tank.fish = tank.fish.slice(0, want)
@@ -1013,12 +1020,31 @@ function stepTank(dt: number) {
       if (ahead > -2 && ahead < 60 && (!target || Math.abs(q.x - f.x) < Math.abs(target.x - f.x))) target = q
     }
     let pace = 1
+    if (!target) {
+      f.taskT -= dt
+      if (f.task === 'swim' && f.taskT <= 0 && phase !== 'working' && rnd() < dt / 10) {
+        f.task = rnd() < 0.6 ? 'forage' : 'gulp'
+        f.taskT = 6
+        f.home = f.task === 'forage' ? laneY(maxLane()) + (snap() ? 2 : 1) : laneY(0) - (snap() ? 1 : 0)
+      } else if (f.task !== 'swim' && f.taskT <= 0) {
+        f.task = 'swim'
+        f.taskT = 8
+        f.home = laneY(laneOf(H * 0.45))
+      }
+      if (f.task !== 'swim') pace = 0.45
+      const there = Math.abs(f.yBase - f.home) < 1
+      if (there && f.task === 'forage' && rnd() < dt * 3) {
+        const nose = f.x + f.dir * 1
+        tank.puffs.push({ x: nose, y: H - 2, vx: (rnd() - 0.5) * 3, vy: -3 - rnd() * 3, age: 0 })
+      }
+      if (there && f.task === 'gulp' && rnd() < dt * 1.2) tank.pops.push({ x: f.x, age: 0 })
+    }
     if (target) {
       f.home = Math.max(laneY(0), Math.min(laneY(maxLane()), target.y))
       pace = 1.5
       if (Math.abs(target.x - f.x) < 2.5 && Math.abs(target.y - fishCentre(f)) < f.Hh / 2 + 1) {
         tank.flakes.splice(tank.flakes.indexOf(target), 1)
-        tank.bubbles.push({ x: f.x, y: fishCentre(f) - 1, wob: rnd() * 6 })
+        tank.bubbles.push({ x: f.x, y: fishCentre(f) - 1, wob: rnd() * 6, size: 1 })
       }
     } else {
       // traffic sense: a koi closing on another at the same depth and heading eases off
@@ -1046,21 +1072,32 @@ function stepTank(dt: number) {
       continue
     }
     q.y = Math.min(bed, q.y + sink * dt * (q.age < 2 ? 0.2 : 1)) // they float a moment, then sink
-    q.x += Math.sin(tank.t * 1.3 + q.age) * 0.3 * dt
+    q.x += Math.sin(q.age * 4 + q.x) * (snap() ? 2.4 : 1.2) * dt // a flake flutters as it sinks
   }
   tank.flakes = tank.flakes.filter(q => q.settled < 6)
   // the bubbler, on the right, and any bubbles a koi let go
   tank.nextBubble -= dt
   if (tank.nextBubble <= 0) {
     tank.nextBubble = 0.35 + rnd() * 0.5
-    tank.bubbles.push({ x: W - (snap() ? 7 : 4), y: H - (snap() ? 3 : 2), wob: rnd() * 6 })
+    tank.bubbles.push({ x: W - (snap() ? 7 : 4), y: H - (snap() ? 3 : 2), wob: rnd() * 6, size: rnd() < 0.35 ? 2 : 1 })
   }
   const rise = snap() ? 7 : 3.5
   for (const b of tank.bubbles) {
     b.y -= rise * dt
     b.wob += dt * 5
   }
-  tank.bubbles = tank.bubbles.filter(b => b.y > 0.5)
+  // a bubble pops at the surface
+  for (const b of tank.bubbles) if (b.y <= 1.5) tank.pops.push({ x: b.x, age: 0 })
+  tank.bubbles = tank.bubbles.filter(b => b.y > 1.5)
+  for (const p of tank.pops) p.age += dt
+  tank.pops = tank.pops.filter(p => p.age < 0.35)
+  for (const p of tank.puffs) {
+    p.age += dt
+    p.x += p.vx * dt
+    p.y += p.vy * dt
+    p.vy += 3 * dt
+  }
+  tank.puffs = tank.puffs.filter(p => p.age < 1.2)
 }
 
 function fishCentre(f: TankKoi): number {
@@ -1086,6 +1123,13 @@ function paintTank(g: Grid) {
   const W = g.w
   const H = g.h
   const t = tank.t
+  const light = lightLevel()
+  // light through the surface: slow diagonal shafts, while the tank is lit
+  if (light > 0.7) {
+    for (let y = 1; y < H * 0.8; y += 1) for (let x = 0; x < W; x += 1) {
+      if (Math.sin(x * 0.29 + y * 0.5 - t * 0.7) > 0.97 && Math.sin(x * 0.045 - t * 0.15 + y * 0.02) > 0.6) put(g, x, y, mix(ground, 0x3a6a80, 0.35), 1, 4002)
+    }
+  }
   // the surface: a faint line that shimmers
   for (let x = 0; x < W; x += 1) if (Math.sin(x * 0.7 + t * 2.4) + Math.sin(x * 0.23 - t * 1.1) > 0.9) put(g, x, 0, COL.surface, L_WATER, 4001)
   // weed, swaying from the gravel; the koi swim in front of it
@@ -1097,11 +1141,28 @@ function paintTank(g: Grid) {
       const x0 = cx + b * (snap() ? 2 : 1) - 1
       for (let y = 0; y < tall; y += 1) {
         const sway = Math.sin(t * 0.9 + c + b * 1.3 + y * 0.18) * (y / tall) * (snap() ? 2.2 : 1.2)
-        put(g, Math.round(x0 + sway), H - 1 - y, b === 1 ? COL.weedDark : COL.weed, L_WEED, 5000 + b)
+        const leaf = b === 1 ? COL.weedDark : COL.weed
+        put(g, Math.round(x0 + sway), H - 1 - y, mix(leaf, ground, 0.35), L_WEED, 5000 + b) // these stand at the back
       }
     }
   })
-  for (const b of tank.bubbles) put(g, Math.round(b.x + Math.sin(b.wob) * 0.8), Math.round(b.y), COL.bubble, L_BUBBLE, 5100)
+  decor(g)
+  for (const b of tank.bubbles) {
+    const bx = Math.round(b.x + Math.sin(b.wob) * 0.8)
+    const by = Math.round(b.y)
+    put(g, bx, by, COL.bubble, L_BUBBLE, 5100)
+    if (b.size === 2 && snap()) {
+      put(g, bx + 1, by, COL.bubble, L_BUBBLE, 5100)
+      put(g, bx, by - 1, COL.bubble, L_BUBBLE, 5100)
+      put(g, bx + 1, by - 1, 0xd8eef7, L_BUBBLE, 5100)
+    }
+  }
+  for (const p of tank.pops) {
+    const s = Math.round(1 + p.age * (snap() ? 9 : 5))
+    put(g, Math.round(p.x) - s, 1, 0xc4e3f0, 96, 5101)
+    put(g, Math.round(p.x) + s, 1, 0xc4e3f0, 96, 5101)
+  }
+  for (const p of tank.puffs) put(g, Math.round(p.x), Math.round(p.y), GRAVEL[2]!, 59, 6001)
   // koi, furthest from the glass first, then smaller before bigger
   const order = [...tank.fish].sort((a, b) => b.depth - a.depth || a.L - b.L)
   const factor = speedFactor()
@@ -1112,14 +1173,23 @@ function paintTank(g: Grid) {
     const wag = factor === 0 ? 0 : 0.7 * Math.sin(beat + f.phase) * Math.min(1, factor)
     const flap = factor === 0 ? 0 : Math.sin(beat * 0.5 + f.phase) * 0.6
     const sprite = f.L < 20 ? SMALL : BIG
-    const dots = squeeze < 1 ? endOn(f.L, f.Hh, squeeze) : snap() ? sideShape(f.L, f.Hh, wag, flap) : spriteDots(sprite, wag * 1.4, flap)
+    const face = squeeze < 0.55 // mid-turn, the koi faces out of the glass
+    const dots = face ? faceOn(f.Hh, flap) : squeeze < 1 ? endOn(f.L, f.Hh, squeeze) : snap() ? sideShape(f.L, f.Hh, wag, flap) : spriteDots(sprite, wag * 1.4, flap)
     const paintL = snap() ? f.L : sprite.bodyL / 0.7 // the length the side markings are laid along
     const hx = Math.round(f.x)
     const { hy, row } = tankY(f)
     const layer = L_FISH + z
+    // pitch: nose down to forage or dive, up to gulp or rise; a shear along the body
+    let pitch = 0
+    if (f.turning === 0) {
+      pitch = Math.max(-1, Math.min(1, (f.home - f.yBase) * 0.35))
+      if (Math.abs(f.home - f.yBase) < 1 && f.task === 'forage') pitch = 0.7
+      if (Math.abs(f.home - f.yBase) < 1 && f.task === 'gulp') pitch = -0.6
+    }
+    const mid = (snap() ? f.L : sprite.bodyL) * 0.45
     for (const d of dots) {
-      const X = f.dir === -1 ? Math.round(hx + d.x * (squeeze < 1 ? squeeze : 1)) : Math.round(hx - d.x * (squeeze < 1 ? squeeze : 1))
-      const Y = hy + d.y
+      const X = face ? hx + d.x : f.dir === -1 ? Math.round(hx + d.x * (squeeze < 1 ? squeeze : 1)) : Math.round(hx - d.x * (squeeze < 1 ? squeeze : 1))
+      const Y = hy + d.y - (squeeze === 1 ? Math.round(pitch * (mid - d.x) * (snap() ? 0.14 : 0.1)) : 0)
       if (d.part === 'eye') {
         put(g, X, Y, EYE, layer, (z + 1) * 16 + 9)
         continue
@@ -1127,8 +1197,8 @@ function paintTank(g: Grid) {
       let c: number
       let key = (z + 1) * 16
       if (d.part === 'body') {
-        c = sidePaint(f.pattern, paintL, f.Hh, d.x, d.y)
-        if (snap() && squeeze === 1) {
+        c = sidePaint(f.pattern, paintL, f.Hh, face ? paintL * 0.7 * 0.14 : d.x, d.y)
+        if (snap() && squeeze === 1 && pitch === 0) {
           // one colour a cell: read the mosaic by the cell's column from the head
           // (the even one of its two dot columns, so each mosaic column lands in
           // exactly one cell) and by back or belly row
@@ -1156,13 +1226,111 @@ function paintTank(g: Grid) {
     put(g, x, H - 1, c, L_GRAVEL, 6000 + Math.floor(n * 3))
     if (snap() && n > 0.45) put(g, x, H - 2, GRAVEL[(Math.floor(n * 10) + 1) % GRAVEL.length]!, L_GRAVEL, 6000 + Math.floor(n * 3))
   }
-  for (const q of tank.flakes) put(g, Math.round(q.x), Math.round(q.y), COL.pellet, L_FOOD, 2000)
+  for (const q of tank.flakes) put(g, Math.round(q.x), Math.round(q.y), Math.sin(q.age * 7 + q.x) > 0 ? 0xe0a868 : COL.pellet, L_FOOD, 2000)
+  glass(g)
+  snail(g)
+  if (light < 1) {
+    for (let i = 0; i < g.col.length; i += 1) {
+      const c = g.col[i]!
+      if (c >= 0) g.col[i] = mix(ground, mix(c, 0x1a2c4a, (1 - light) * 0.55), 0.25 + light * 0.75)
+    }
+  }
 }
 
 function feedTank() {
   const W = tankW()
   const x = 10 + rnd() * Math.max(1, W - 20)
   for (let i = 0; i < 5; i += 1) tank.flakes.push({ x: x + (rnd() - 0.5) * (snap() ? 14 : 7), y: 1, age: rnd() * 0.5, settled: 0 })
+}
+
+// ---- the tank's light, decor, glass and snail ----------------------------------
+
+// The tank light follows the context window: full under 50%, dimming to 80%,
+// then night: lights out, a blue dark, the koi asleep on the gravel.
+function lightLevel(): number {
+  const percent = reading?.percent ?? 0
+  return percent < 50 ? 1 : percent < 80 ? 1 - ((percent - 50) / 30) * 0.4 : 0.32
+}
+
+// A koi seen face-on, the middle of a U-turn: round, two eyes, fins out each side.
+function faceOn(Hh: number, flap: number): SideDot[] {
+  const r = Hh / 2 + 0.4
+  const dots: SideDot[] = []
+  const rx = snap() ? r * 0.9 : r * 0.85
+  for (let y = -Math.ceil(r); y <= Math.ceil(r); y += 1) {
+    for (let x = -Math.ceil(rx); x <= Math.ceil(rx); x += 1) {
+      if ((x / rx) ** 2 + (y / r) ** 2 > 1) continue
+      const eye = y === -1 && Math.abs(x) === Math.max(1, Math.round(rx * 0.5))
+      dots.push({ x, y, part: eye ? 'eye' : 'body' })
+    }
+  }
+  const out = Math.ceil(rx) + 1
+  const lift = flap > 0 ? 0 : 1
+  for (const s of [-1, 1]) {
+    dots.push({ x: s * out, y: 1 + lift, part: 'fin' })
+    dots.push({ x: s * (out + 1), y: 2 + lift, part: 'fin' })
+  }
+  return dots
+}
+
+// A river stone and a piece of driftwood on the gravel, a weed clump in front
+// of the koi, so they pass behind it.
+function decor(g: Grid) {
+  const W = g.w
+  const H = g.h
+  const k = snap() ? 1 : 0.5
+  const sx = Math.floor(W * 0.24)
+  const rw = 7 * k + 1
+  const rh = 3.4 * k + 1
+  for (let y = Math.floor(H - 1 - rh); y < H - 1; y += 1) for (let x = Math.floor(sx - rw); x <= sx + rw; x += 1) {
+    const u = (x - sx) / rw
+    const v = (y - (H - 1)) / rh
+    if (u * u + v * v > 1) continue
+    put(g, x, y, v < -0.55 && u < 0 ? 0x8b9097 : u > 0.3 ? 0x5d6168 : 0x72777e, 8, 5200)
+  }
+  const wx = Math.floor(W * 0.68)
+  const len = Math.round(16 * k)
+  for (let i = 0; i < len; i += 1) {
+    const x = wx + i
+    const y = H - 2 - Math.round((i / len) * 3 * k + Math.sin(i * 0.9) * 0.4)
+    put(g, x, y, i % 4 === 0 ? 0x5a4130 : 0x6e5038, 8, 5201)
+    if (snap()) put(g, x, y + 1, 0x4d3828, 8, 5201)
+  }
+  const fx = Math.floor(W * 0.86)
+  for (let b = 0; b < 2; b += 1) {
+    const tall = H * (0.62 + 0.18 * b)
+    for (let y = 0; y < tall; y += 1) {
+      const sway = Math.sin(tank.t * 0.8 + b * 2 + y * 0.2) * (y / tall) * (snap() ? 2.6 : 1.4)
+      put(g, Math.round(fx + b * (snap() ? 3 : 1) + sway), H - 1 - y, b ? 0x4fae5c : 0x45a050, 70, 5300 + b)
+    }
+  }
+}
+
+// The glass: its two side edges, and a glint in the top corners.
+function glass(g: Grid) {
+  for (let y = 0; y < g.h; y += 1) {
+    put(g, 0, y, 0x3a4854, 97, 7000)
+    put(g, g.w - 1, y, 0x3a4854, 97, 7000)
+  }
+  const glint = snap() ? [[2, 2], [3, 1], [3, 2], [4, 1]] : [[1, 1], [2, 1]]
+  for (const [x, y] of glint) put(g, x!, y!, 0x9fb5c6, 97, 7001)
+  for (const [x, y] of glint) put(g, g.w - 1 - x!, y!, 0x6f8494, 97, 7001)
+}
+
+// A snail on the front glass, crossing the tank over the session.
+function snail(g: Grid) {
+  const W = g.w
+  const H = g.h
+  const x = Math.floor((tank.t * SNAIL_SPEED * (snap() ? 1 : 0.5)) % (W - 8)) + 3
+  const y = H - (snap() ? 4 : 3)
+  const shell = 0xb0703a
+  const swirl = 0x7d4a24
+  const foot = 0xa8a294
+  if (snap()) {
+    for (const [dx, dy, c] of [[0, 0, shell], [1, 0, swirl], [2, 0, shell], [0, -1, shell], [1, -1, shell], [2, -1, swirl], [1, -2, shell], [3, 1, foot], [-1, 1, foot], [0, 1, foot], [1, 1, foot], [2, 1, foot], [4, 0, foot], [4, -1, foot]] as [number, number, number][]) put(g, x + dx, y + dy, c, 98, 7100 + (c === foot ? 1 : 0))
+  } else {
+    for (const [dx, dy, c] of [[0, 0, shell], [1, 0, swirl], [0, -1, shell], [1, -1, shell], [2, 1, foot], [0, 1, foot], [1, 1, foot], [3, 0, foot]] as [number, number, number][]) put(g, x + dx, y + dy, c, 98, 7100)
+  }
 }
 
 // ---- repaint ------------------------------------------------------------------
