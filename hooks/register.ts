@@ -70,6 +70,10 @@ let phase: Phase = 'idle'
 let frame = 0
 let happyUntil = 0
 let reading: Reading | null = null
+// /koi night and /koi dusk: the percent the drawing reads for a minute, until a
+// frame on the tank's clock; the reading itself stays true, so /koi still reports it
+let preview: { name: 'night' | 'dusk'; percent: number; until: number } | null = null
+const PREVIEW_FRAMES = 60_000 / TICK_MS // a minute of ticks
 let ticker: { cancel: () => void } | null = null
 let cols = 0
 let requestId: string | null = null
@@ -89,10 +93,11 @@ export const register: Register = (on, options) => {
     const result = await next(e)
     phase = 'idle'
     frame = 0
+    preview = null
     algaeT = 0 // a new session, a clean tank
     await takeReading($)
     try {
-      await $.command.register({ name: 'koi', description: 'How full the koi think the context is, and against which window' })
+      await $.command.register({ name: 'koi', description: 'How full the koi think the context is; /koi night or /koi dusk previews the dark for a minute, /koi day ends it' })
     } catch {
       // the band still works without the command
     }
@@ -106,6 +111,10 @@ export const register: Register = (on, options) => {
     ticker = $.clock.every(TICK_MS, () => {
       frame += 1
       if (phase === 'happy' && frame >= happyUntil) phase = 'idle'
+      if (preview && frame >= preview.until) {
+        preview = null // the minute is up: back to the real reading
+        $.ui.invalidate('ui.render')
+      }
       if (!mounted || cols === 0) return
       step(DT) // full rate asleep too: the moon shimmers, the dragonfly flies, a sleeper drifts
       void repaint($)
@@ -121,13 +130,27 @@ export const register: Register = (on, options) => {
     return result
   })
 
-  on('command.run', { command: 'koi' }, async $ => {
+  on('command.run', { command: 'koi' }, async ($, e) => {
+    const arg = String(e?.args ?? '').trim().toLowerCase()
+    if (arg === 'night' || arg === 'dusk') {
+      preview = { name: arg, percent: arg === 'night' ? 90 : 65, until: frame + PREVIEW_FRAMES }
+      $.ui.invalidate('ui.render')
+      return { text: arg === 'night' ? 'Night falls on the koi for a minute (a preview; the context is unchanged). /koi day ends it.' : 'Dusk on the koi for a minute (a preview; the context is unchanged). /koi day ends it.' }
+    }
+    if (arg === 'day') {
+      const was = preview
+      preview = null
+      $.ui.invalidate('ui.render')
+      return { text: was ? `The ${was.name} preview is over; the koi follow the context again.` : 'No preview running; the koi follow the context.' }
+    }
+    if (arg) return { text: 'Usage: /koi (the reading), /koi night or /koi dusk (a minute\'s preview), /koi day (end it).' }
     await takeReading($)
-    if (!reading) return { text: 'No context reading yet.' }
+    const showing = preview ? ` Previewing ${preview.name} for ${Math.max(1, Math.ceil(((preview.until - frame) * TICK_MS) / 1000))}s more (/koi day ends it).` : ''
+    if (!reading) return { text: `No context reading yet.${showing}` }
     const k = (n: number) => `${Math.round(n / 1000)}k`
     const tier = tierFor(reading.percent).key
     const against = reading.source === 'model' ? "the model's whole window (no auto-compact window reported)" : `the auto-compact window (set by: ${reading.source})`
-    return { text: `${k(reading.tokens)} of ${k(reading.window)}, ${reading.percent}%: ${tier}. Measured against ${against}.` }
+    return { text: `${k(reading.tokens)} of ${k(reading.window)}, ${reading.percent}%: ${tier}. Measured against ${against}.${showing}` }
   })
 
   on('prompt.submit', ($, e, next) => {
@@ -169,7 +192,7 @@ export const register: Register = (on, options) => {
     const table = $.ui.resolve(e) as Record<string, (props: Record<string, unknown>) => unknown>
     const { Box, Text, Raster } = table
     const working = phase === 'working' || e.props.isWorking
-    const tier = tierFor(reading?.percent ?? 0)
+    const tier = tierFor(shownPercent())
     const bodyColumns = e.props.bodyColumns ?? 80
     const fits = e.surface === 'terminal' && typeof Raster === 'function' && (e.props.maxRows ?? 1) >= rows && bodyColumns >= 30
     if (!fits) {
@@ -182,11 +205,14 @@ export const register: Register = (on, options) => {
     resize(Math.max(20, Math.min(512, bodyColumns - 2)))
     requestId = e.requestId
     mounted = true
-    // one blank row under the water, between the band and the token counter, where there's room
-    const gap = (e.props.maxRows ?? 1) >= rows + 1 ? 1 : 0
-    return Box({ flexDirection: 'row', paddingX: 1, paddingBottom: gap, children: [
+    // a blank row under the water, between the band and the token counter, where
+    // there's room; then one over it too, where there's room for both
+    const room = (e.props.maxRows ?? 1) - rows
+    const pond = Box({ flexDirection: 'row', paddingX: 1, paddingTop: room >= 2 ? 1 : 0, paddingBottom: room >= 1 ? 1 : 0, children: [
       Raster({ key: 'pond', columns: cols, rows, cells: cellsFor() }),
     ] })
+    // whatever a hook beneath drew (a meter, a note) keeps its place under the koi
+    return hasContent(below) ? Box({ flexDirection: 'column', children: [pond, below] }) : pond
   })
 }
 
@@ -194,7 +220,7 @@ export const register: Register = (on, options) => {
 
 function speedFactor(): number {
   if (phase === 'working') return 2.2
-  const tier = tierFor(reading?.percent ?? 0).key
+  const tier = tierFor(shownPercent()).key
   return tier === 'asleep' ? 0 : tier === 'drowsy' ? 0.45 : 1
 }
 
@@ -255,6 +281,11 @@ const L_WATER = 0
 const L_WEED = 2
 const L_BUBBLE = 3
 const L_FISH = 10 // plus the koi's place in the draw order
+// The tank's koi stand in front of everything in it (weed, decor, gravel, food,
+// glass, moonlight), so in braille no tank item ever takes a cell from a koi and
+// repaints part of it; only a splash or gulp at the surface is drawn over them.
+const L_TANK_FISH = 100 // plus the koi's place in the draw order
+const L_SPLASH = 200
 const L_GRAVEL = 60
 const L_PAD = 80
 const L_FOOD = 90
@@ -1413,8 +1444,8 @@ function paintTank(g: Grid) {
   }
   for (const p of tank.pops) {
     const s = Math.round(1 + p.age * (snap() ? 9 : 5))
-    put(g, Math.round(p.x) - s, 1, 0xc4e3f0, 96, 5101)
-    put(g, Math.round(p.x) + s, 1, 0xc4e3f0, 96, 5101)
+    put(g, Math.round(p.x) - s, 1, 0xc4e3f0, L_SPLASH, 5101)
+    put(g, Math.round(p.x) + s, 1, 0xc4e3f0, L_SPLASH, 5101)
   }
   for (const p of tank.puffs) put(g, Math.round(p.x), Math.round(p.y), GRAVEL[2]!, 59, 6001)
   splashes(g)
@@ -1433,7 +1464,7 @@ function paintTank(g: Grid) {
     const paintL = snap() ? f.L : sprite.bodyL / 0.7 // the length the side markings are laid along
     const hx = Math.round(f.x)
     const { hy, row } = tankY(f)
-    const layer = L_FISH + z
+    const layer = L_TANK_FISH + z
     // pitch: nose down to forage or dive, up to gulp or rise; a shear along the body
     let pitch = 0
     if (f.turning === 0) {
@@ -1453,13 +1484,15 @@ function paintTank(g: Grid) {
       let key = (z + 1) * 16
       if (d.part === 'body') {
         c = sidePaint(f.pattern, paintL, f.Hh, face ? paintL * 0.7 * 0.14 : d.x, d.y)
-        if (snap() && squeeze === 1 && pitch === 0) {
+        if (snap() && squeeze === 1) {
           // one colour a cell: read the mosaic by the cell's column from the head
           // (the even one of its two dot columns, so each mosaic column lands in
-          // exactly one cell) and by back or belly row
+          // exactly one cell) and by back or belly row. A pitched koi reads its
+          // row from the level body, so its markings stay on it as it noses up or
+          // down rather than falling back to fine paint that cells re-vote dot by dot.
           const a = f.dir === -1 ? Math.floor(X / 2) * 2 - hx : hx - Math.floor(X / 2) * 2
           const lx = a % 2 === 0 ? a : f.dir === -1 ? a + 1 : a - 1
-          c = mosaicAt(f.pattern, lx / 2, Math.floor(Y / 4) - row) ?? c
+          c = mosaicAt(f.pattern, lx / 2, Math.floor((hy + d.y) / 4) - row) ?? c
         } else if (!snap()) {
           const u = d.y / (f.Hh / 2)
           c = shade(c, u < -0.5 ? 0.9 : u > 0.6 ? 1.06 : 1) // a darker back, a paler belly
@@ -1474,7 +1507,7 @@ function paintTank(g: Grid) {
       put(g, X, Y, c, layer, key)
     }
   })
-  // gravel along the bottom, in front of a resting koi's belly
+  // gravel along the bottom, behind a resting koi's belly
   for (let x = 0; x < W; x += 1) {
     const n = Math.abs(Math.sin(x * 12.9898) * 43758.5453) % 1
     const c = GRAVEL[Math.floor(n * GRAVEL.length)]!
@@ -1498,10 +1531,8 @@ const hash = (x: number, y: number) => Math.abs(Math.sin(x * 127.1 + y * 311.7) 
 
 // Night: moonlight, painted over the dimmed tank. A pale moon shimmering on the
 // surface, a silver rim along the top of each koi, and cool glints that come and
-// go on the gravel. In pixels the rim is the koi's own top pixel, silvered. In
-// dots a cell has one colour, so silvering the top would pale the whole back;
-// the rim is a line of dots just above the koi's top cell row instead, in the
-// cell above, where it has the cell to itself.
+// go on the gravel. The rim is the koi's own top, silvered (the reference
+// mock's way): never a line of its own above the fish, so it cannot float.
 function moonlight(g: Grid) {
   const W = g.w
   const H = g.h
@@ -1515,16 +1546,17 @@ function moonlight(g: Grid) {
     put(g, x, 0, edge < 0.5 ? 0xf2f6fc : 0xc9d6e8, 95, 7300)
     if (edge < 0.6 && Math.sin(t * 1.6 + x * 2.3) > 0.1) put(g, x, 1, 0x8fa3bf, 95, 7301)
   }
-  const isFish = (x: number, y: number) => y >= 0 && g.layer[y * W + x]! >= L_FISH && g.layer[y * W + x]! < L_GRAVEL
+  const isFish = (x: number, y: number) => y >= 0 && g.layer[y * W + x]! >= L_TANK_FISH && g.layer[y * W + x]! < L_SPLASH
+  // the koi's own top samples, silvered: one in pixels, two dot rows in dots. In
+  // dots the silver keeps the koi's keys, so it blends into the cell's one colour
+  // and the back of each koi glows pale under the moon, as the mock had it.
+  const rim = dots ? 2 : 1
   for (let x = 0; x < W; x += 1) for (let y = 1; y < H; y += 1) {
     const i = y * W + x
-    if (!isFish(x, y) || isFish(x, y - 1) || g.col[i]! < 0) continue
-    if (!dots) {
-      g.col[i] = mix(g.col[i]!, 0xdce6f4, 0.6)
-      continue
-    }
-    const above = Math.floor(y / 4) * 4 - 1 // the bottom dot row of the cell above
-    if (above >= 1 && !isFish(x, above)) put(g, x, above, 0xc8d4e6, L_FISH - 1, 7302)
+    if (!isFish(x, y) || g.col[i]! < 0) continue
+    let edge = false
+    for (let d = 1; d <= rim; d += 1) if (y - d >= 0 && !isFish(x, y - d)) edge = true
+    if (edge) g.col[i] = mix(g.col[i]!, 0xdce6f4, dots ? 0.7 : 0.6)
   }
   for (let x = 1; x < W - 1; x += 1) {
     if (hash(x, 11) > (dots ? 0.1 : 0.14)) continue
@@ -1630,16 +1662,16 @@ function splashes(g: Grid) {
   for (const p of tank.splashes) {
     const x = Math.round(p.x)
     const a = p.age
-    if (a < 0.25) put(g, x, 0, 0x0e2230, 96, 5110) // the dimple
+    if (a < 0.25) put(g, x, 0, 0x0e2230, L_SPLASH, 5110) // the dimple
     if (a < 0.5) for (const side of [-1, 0, 1]) {
       const dx = Math.round(side * (0.5 + a * 7 * k))
       const dy = Math.max(0, Math.round(-1 + a * a * 18 * k)) // up, then back down
-      put(g, x + dx, Math.min(2 * k, dy), 0xe8f6fb, 96, 5111)
+      put(g, x + dx, Math.min(2 * k, dy), 0xe8f6fb, L_SPLASH, 5111)
     }
     const r = Math.round(1 + a * 10 * k)
     const fade = mix(0xc4e3f0, ground, Math.min(1, a / 0.9))
-    put(g, x - r, 1, fade, 96, 5112)
-    put(g, x + r, 1, fade, 96, 5112)
+    put(g, x - r, 1, fade, L_SPLASH, 5112)
+    put(g, x + r, 1, fade, L_SPLASH, 5112)
   }
 }
 
@@ -1648,7 +1680,7 @@ function splashes(g: Grid) {
 // The tank light follows the context window: full under 50%, dimming to 80%,
 // then night: lights out, a blue dark, the koi asleep on the gravel.
 function lightLevel(): number {
-  const percent = reading?.percent ?? 0
+  const percent = shownPercent()
   return percent < 50 ? 1 : percent < 80 ? 1 - ((percent - 50) / 30) * 0.6 : 0.32
 }
 
@@ -1758,6 +1790,17 @@ function hasButton(tree: unknown): boolean {
   return kids.some(hasButton)
 }
 
+// Whether a tree beneath draws anything: text, a raster or an image, not an empty box.
+function hasContent(tree: unknown): boolean {
+  if (typeof tree === 'string') return tree.trim() !== ''
+  if (typeof tree === 'number') return true
+  if (!tree || typeof tree !== 'object') return false
+  if (Array.isArray(tree)) return tree.some(hasContent)
+  const node = tree as { type?: unknown; props?: { children?: unknown; text?: unknown }; children?: unknown; text?: unknown }
+  if (node.type === 'Raster' || node.type === 'Image') return true
+  return hasContent(node.text) || hasContent(node.props?.text) || hasContent(node.children) || hasContent(node.props?.children)
+}
+
 // ---- state ------------------------------------------------------------------
 
 type Context = { tokens?: number; window: number; percent?: number; breakdown?: { totalTokens: number; rawMaxTokens: number; percentage: number; autocompactSource?: string } }
@@ -1779,6 +1822,11 @@ async function takeReading($: { session: { usage: (args?: { breakdown?: 'summary
   } catch {
     // keep the last reading
   }
+}
+
+// The percent the drawing reads: a running preview's, else the real reading's.
+function shownPercent(): number {
+  return preview ? preview.percent : reading?.percent ?? 0
 }
 
 function tierFor(percent: number): Tier {

@@ -67,12 +67,13 @@ test('the rows option sets the pond height', { options: { rows: 4 } }, async ($,
   await ui.unmount()
 })
 
-test('a blank row sits under the band when there is room for it', async ($, on) => {
+test('a blank row sits under the band, and one over it, when there is room for them', async ($, on) => {
   on('ui.render', { component: 'AbovePrompt' }, emptyBand)
-  for (const [maxRows, gap] of [[8, 1], [6, 0]] as const) {
+  for (const [maxRows, top, bottom] of [[8, 1, 1], [7, 0, 1], [6, 0, 0]] as const) {
     const ui = await $.ui.mount({ plugin: 'koi-pond', surface: 'terminal', ...band({ maxRows }) })
     const box = await ui.find({ type: 'Box' } as any)
-    expect((box as any).props.paddingBottom).toBe(gap)
+    expect((box as any).props.paddingTop).toBe(top)
+    expect((box as any).props.paddingBottom).toBe(bottom)
     expect((await ui.find({ type: 'Raster', key: 'pond' } as any) as any).props.rows).toBe(6)
     await ui.unmount()
   }
@@ -149,5 +150,42 @@ test('past 80% night falls on the pond and the moon lies on the water, over the 
   const want = [[0x16, 0xe9], [0x18, 0xe6], [0x1c, 0xd2]].map(([a, m]) => Math.round(a! + (m! - a!) * 0.9))
   const got = [(fg! >> 16) & 255, (fg! >> 8) & 255, fg! & 255]
   got.forEach((c, k) => expect(Math.abs(c - want[k]!)).toBeLessThan(3))
+  await ui.unmount()
+})
+
+const moonCore = (pond: any) => {
+  const cells = glyphs(pond)
+  const cols = pond.props.columns
+  const rows = pond.props.rows
+  return cells[Math.floor(rows * 0.42) * cols + Math.floor(cols * 0.64)]!
+}
+
+test('/koi night previews the night without touching the reading, and /koi day ends it', async ($, on) => {
+  // a nearly empty context: only the preview can bring the night
+  on('session.usage', () => ({ value: { startedAt: 0, rateLimits: [], context: { tokens: 3_000, window: 300_000, percent: 1 } } }) as any)
+  on('ui.render', { component: 'AbovePrompt' }, emptyBand)
+  const ui = await $.ui.mount({ plugin: 'koi-pond', surface: 'terminal', ...band({}) })
+  expect(moonCore(await ui.find({ type: 'Raster', key: 'pond' } as any))[0]).not.toBe(0x28ff)
+  const night = (await $.command.run({ command: 'koi', args: 'night' } as any)) as any
+  expect(night.text).toMatch(/Night falls/)
+  expect(moonCore(await ui.find({ type: 'Raster', key: 'pond' } as any))[0]).toBe(0x28ff)
+  // the report stays true, and names the preview
+  const report = (await $.command.run({ command: 'koi' } as any)) as any
+  expect(report.text).toMatch(/1%: fresh/)
+  expect(report.text).toMatch(/Previewing night/)
+  const day = (await $.command.run({ command: 'koi', args: 'day' } as any)) as any
+  expect(day.text).toMatch(/night preview is over/)
+  expect(moonCore(await ui.find({ type: 'Raster', key: 'pond' } as any))[0]).not.toBe(0x28ff)
+  await ui.unmount()
+})
+
+test('a tree drawn beneath the band keeps its place under the koi', async ($, on) => {
+  on('ui.render', { component: 'AbovePrompt' }, ($: any, e: any) => {
+    const { Text } = $.ui.resolve(e)
+    return Text({ children: 'meter 42%' })
+  })
+  const ui = await $.ui.mount({ plugin: 'koi-pond', surface: 'terminal', ...band({}) })
+  expect(await ui.find({ type: 'Raster', key: 'pond' } as any)).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /meter 42%/ })).toBeDefined()
   await ui.unmount()
 })
