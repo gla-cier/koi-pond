@@ -179,6 +179,16 @@ test('/koi night previews the night without touching the reading, and /koi day e
   await ui.unmount()
 })
 
+test('/koi feed drops food in on demand', async ($, on) => {
+  on('ui.render', { component: 'AbovePrompt' }, emptyBand)
+  const ui = await $.ui.mount({ plugin: 'koi-pond', surface: 'terminal', ...band({}) })
+  const fed = (await $.command.run({ command: 'koi', args: 'feed' } as any)) as any
+  expect(fed.text).toMatch(/Food drops in/)
+  await ui.unmount()
+  const usage = (await $.command.run({ command: 'koi', args: 'nonsense' } as any)) as any
+  expect(usage.text).toMatch(/\/koi feed/)
+})
+
 test('a tree drawn beneath the band keeps its place under the koi', async ($, on) => {
   on('ui.render', { component: 'AbovePrompt' }, ($: any, e: any) => {
     const { Text } = $.ui.resolve(e)

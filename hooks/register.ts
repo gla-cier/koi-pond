@@ -97,7 +97,7 @@ export const register: Register = (on, options) => {
     algaeT = 0 // a new session, a clean tank
     await takeReading($)
     try {
-      await $.command.register({ name: 'koi', description: 'How full the koi think the context is; /koi night or /koi dusk previews the dark for a minute, /koi day ends it' })
+      await $.command.register({ name: 'koi', description: 'How full the koi think the context is; /koi feed drops food in; /koi night or /koi dusk previews the dark for a minute, /koi day ends it' })
     } catch {
       // the band still works without the command
     }
@@ -137,13 +137,20 @@ export const register: Register = (on, options) => {
       $.ui.invalidate('ui.render')
       return { text: arg === 'night' ? 'Night falls on the koi for a minute (a preview; the context is unchanged). /koi day ends it.' : 'Dusk on the koi for a minute (a preview; the context is unchanged). /koi day ends it.' }
     }
+    if (arg === 'feed') {
+      phase = 'happy'
+      happyUntil = frame + 25
+      dropFood($)
+      $.ui.invalidate('ui.render')
+      return { text: cols > 0 ? 'Food drops in; the koi come to eat.' : 'No pond on screen to feed right now.' }
+    }
     if (arg === 'day') {
       const was = preview
       preview = null
       $.ui.invalidate('ui.render')
       return { text: was ? `The ${was.name} preview is over; the koi follow the context again.` : 'No preview running; the koi follow the context.' }
     }
-    if (arg) return { text: 'Usage: /koi (the reading), /koi night or /koi dusk (a minute\'s preview), /koi day (end it).' }
+    if (arg) return { text: 'Usage: /koi (the reading), /koi feed (drop food), /koi night or /koi dusk (a minute\'s preview), /koi day (end it).' }
     await takeReading($)
     const showing = preview ? ` Previewing ${preview.name} for ${Math.max(1, Math.ceil(((preview.until - frame) * TICK_MS) / 1000))}s more (/koi day ends it).` : ''
     if (!reading) return { text: `No context reading yet.${showing}` }
@@ -167,12 +174,7 @@ export const register: Register = (on, options) => {
     } else {
       phase = 'happy'
       happyUntil = frame + 25
-      if (cols > 0) feed()
-      if (sound) {
-        $.audio.play({ asset: 'assets/bloop.wav' }).catch(() => {
-          // no player on this platform, or the clip was refused: the food still falls
-        })
-      }
+      dropFood($)
     }
     $.ui.invalidate('ui.render')
     return result
@@ -240,6 +242,16 @@ function step(dt: number) {
 function feed() {
   if (view === 'pond') feedPond()
   else feedTank()
+}
+
+// Food in, with the bloop: a finished turn and /koi feed both drop it this way.
+function dropFood($: { audio: { play: (args: { asset: string }) => Promise<unknown> } }) {
+  if (cols > 0) feed()
+  if (sound) {
+    $.audio.play({ asset: 'assets/bloop.wav' }).catch(() => {
+      // no player on this platform, or the clip was refused: the food still falls
+    })
+  }
 }
 
 const mix = (a: number, b: number, t: number): number => {
