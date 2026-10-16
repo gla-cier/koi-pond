@@ -561,7 +561,7 @@ function swim(f: PondKoi, h: number) {
     const rx = side ? -1 : 1 // the way it faces asleep
     const ty = p[1] + (side ? 2 : -2)
     const along = (f.x - p[0]) * rx
-    const lined = Math.abs(f.y - ty) < 2.5 && along > -f.L * 0.7 && Math.cos(f.th) * rx > 0.7
+    const lined = Math.abs(f.y - ty) < 2.5 && along > -f.L * 0.7 && along < f.L * 0.45 + 3 && Math.cos(f.th) * rx > 0.7 // short of its spot: from past the pad it goes round again, not to sleep in open water
     const tx = p[0] + rx * (lined ? f.L * 0.45 : -f.L * 0.5)
     const d = Math.hypot(tx - f.x, ty - f.y)
     if (d > 1 && !(lined && along >= f.L * 0.45 - 1)) {
