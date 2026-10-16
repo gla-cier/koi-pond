@@ -215,11 +215,11 @@ test('the pond stops idleMinutes after the last sign of life, and the next one s
     await clock.advance(ms)
     return paints - before
   }
-  expect(await painted(1_000)).toBeGreaterThanOrEqual(9) // 10 a second while awake
+  expect(await painted(1_000)).toBeGreaterThanOrEqual(3) // 4 a second while awake
   await clock.advance(3_000)
   expect(await painted(2_000)).toBe(0) // a still pond: the timer is gone
   await $.turn.start({ text: 'hello', turnId: 't1' })
-  expect(await painted(1_000)).toBeGreaterThanOrEqual(9) // and back at full rate
+  expect(await painted(1_000)).toBeGreaterThanOrEqual(3) // and back at full rate
   await clock.advance(3_000)
   expect(await painted(2_000)).toBe(0)
   await ui.unmount()

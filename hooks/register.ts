@@ -15,7 +15,7 @@
 // prompt.submit  -> the koi speed up (Claude is working)
 // turn.complete  -> reads the context window; food and a ripple (pond) or
 //                   flakes (tank), and a soft bloop (userConfig `sound`)
-// a 100 ms ticker-> moves everything and repaints the Raster in place
+// a 250 ms ticker-> moves everything and repaints the Raster in place
 //                   ($.ui.blit), falling back to a band redraw when refused;
 //                   it stops idleMinutes (5) after the last prompt, turn,
 //                   model request, press or input, leaving the fish still,
@@ -28,7 +28,7 @@
 
 import type { Register } from 'claude-code'
 
-const TICK_MS = 100
+const TICK_MS = 250 // 4 frames a second; motion is in seconds, so the rate only sets how smooth it looks
 const DT = TICK_MS / 1000
 const MIN_ROWS = 4
 const MAX_ROWS = 8
@@ -77,6 +77,7 @@ let reading: Reading | null = null
 // frame on the tank's clock; the reading itself stays true, so /koi still reports it
 let preview: { name: 'night' | 'dusk'; percent: number; until: number } | null = null
 const PREVIEW_FRAMES = 60_000 / TICK_MS // a minute of ticks
+const HAPPY_FRAMES = Math.round(2_500 / TICK_MS) // the koi come to eat for two and a half seconds
 const DEFAULT_IDLE_MINUTES = 5 // how long the pond moves after the last sign of life
 let awakeTicks = (DEFAULT_IDLE_MINUTES * 60_000) / TICK_MS // 0: never stops
 let ticker: { cancel: () => void } | null = null
@@ -86,7 +87,7 @@ let requestId: string | null = null
 let mounted = false
 let rnd = mulberry32(0x9e3779b9)
 
-// The ticker: moves everything and repaints, 10 times a second, until the
+// The ticker: moves everything and repaints, 4 times a second, until the
 // session has been quiet for idleMinutes; then it cancels itself and the last
 // frame stays on screen (a still pond costs nothing). wake() restarts it.
 type Ticking = Parameters<typeof repaint>[0] & { clock: { every: (ms: number, fn: () => void) => { cancel: () => void } } }
@@ -168,7 +169,7 @@ export const register: Register = (on, options) => {
     }
     if (arg === 'feed') {
       phase = 'happy'
-      happyUntil = frame + 25
+      happyUntil = frame + HAPPY_FRAMES
       dropFood($)
       $.ui.invalidate('ui.render')
       return { text: cols > 0 ? 'Food drops in; the koi come to eat.' : 'No pond on screen to feed right now.' }
@@ -216,7 +217,7 @@ export const register: Register = (on, options) => {
       phase = 'idle'
     } else {
       phase = 'happy'
-      happyUntil = frame + 25
+      happyUntil = frame + HAPPY_FRAMES
       dropFood($)
     }
     $.ui.invalidate('ui.render')
