@@ -16,7 +16,10 @@
 // turn.complete  -> reads the context window; food and a ripple (pond) or
 //                   flakes (tank), and a soft bloop (userConfig `sound`)
 // a 100 ms ticker-> moves everything and repaints the Raster in place
-//                   ($.ui.blit), falling back to a band redraw when refused
+//                   ($.ui.blit), falling back to a band redraw when refused;
+//                   it stops idleMinutes (5) after the last prompt, turn,
+//                   model request, press or input, leaving the fish still,
+//                   and the next one restarts it
 // ui.render      -> draws the band; yields to a survey and to any other
 //                   plugin's band that has controls; one-line text fallback
 //                   where there is no Raster or the band is too short
@@ -74,11 +77,45 @@ let reading: Reading | null = null
 // frame on the tank's clock; the reading itself stays true, so /koi still reports it
 let preview: { name: 'night' | 'dusk'; percent: number; until: number } | null = null
 const PREVIEW_FRAMES = 60_000 / TICK_MS // a minute of ticks
+const DEFAULT_IDLE_MINUTES = 5 // how long the pond moves after the last sign of life
+let awakeTicks = (DEFAULT_IDLE_MINUTES * 60_000) / TICK_MS // 0: never stops
 let ticker: { cancel: () => void } | null = null
+let idleTicks = 0 // ticks since the last prompt, turn, step, press or input
 let cols = 0
 let requestId: string | null = null
 let mounted = false
 let rnd = mulberry32(0x9e3779b9)
+
+// The ticker: moves everything and repaints, 10 times a second, until the
+// session has been quiet for idleMinutes; then it cancels itself and the last
+// frame stays on screen (a still pond costs nothing). wake() restarts it.
+type Ticking = Parameters<typeof repaint>[0] & { clock: { every: (ms: number, fn: () => void) => { cancel: () => void } } }
+function startTicker($: Ticking) {
+  ticker?.cancel()
+  ticker = $.clock.every(TICK_MS, () => {
+    idleTicks += 1
+    if (awakeTicks > 0 && idleTicks >= awakeTicks) {
+      ticker?.cancel()
+      ticker = null
+      return
+    }
+    frame += 1
+    if (phase === 'happy' && frame >= happyUntil) phase = 'idle'
+    if (preview && frame >= preview.until) {
+      preview = null // the minute is up: back to the real reading
+      $.ui.invalidate('ui.render')
+    }
+    if (!mounted || cols === 0) return
+    step(DT) // full rate asleep too: the moon shimmers, a sleeper visits it (in the tank, drifts), the dragonfly flies
+    void repaint($)
+  })
+}
+
+// A sign of life: the clock runs for another idleMinutes, starting again if it had stopped.
+function wake($: Ticking) {
+  idleTicks = 0
+  if (!ticker) startTicker($)
+}
 
 export const register: Register = (on, options) => {
   sound = options?.sound !== false
@@ -88,6 +125,8 @@ export const register: Register = (on, options) => {
   waterDots = options?.water === 'dots'
   const wanted = Number(options?.rows)
   rows = Number.isFinite(wanted) ? Math.max(MIN_ROWS, Math.min(MAX_ROWS, Math.round(wanted))) : 6
+  const idle = Number(options?.idleMinutes)
+  awakeTicks = Number.isFinite(idle) && idle >= 0 ? Math.round((idle * 60_000) / TICK_MS) : (DEFAULT_IDLE_MINUTES * 60_000) / TICK_MS
 
   on('session.start', async ($, e, next) => {
     const result = await next(e)
@@ -107,18 +146,7 @@ export const register: Register = (on, options) => {
     } catch {
       // keep the dark ground
     }
-    ticker?.cancel()
-    ticker = $.clock.every(TICK_MS, () => {
-      frame += 1
-      if (phase === 'happy' && frame >= happyUntil) phase = 'idle'
-      if (preview && frame >= preview.until) {
-        preview = null // the minute is up: back to the real reading
-        $.ui.invalidate('ui.render')
-      }
-      if (!mounted || cols === 0) return
-      step(DT) // full rate asleep too: the moon shimmers, a sleeper visits it (in the tank, drifts), the dragonfly flies
-      void repaint($)
-    })
+    wake($)
     return result
   })
 
@@ -131,6 +159,7 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'koi' }, async ($, e) => {
+    wake($)
     const arg = String(e?.args ?? '').trim().toLowerCase()
     if (arg === 'night' || arg === 'dusk') {
       preview = { name: arg, percent: arg === 'night' ? 90 : 65, until: frame + PREVIEW_FRAMES }
@@ -160,12 +189,26 @@ export const register: Register = (on, options) => {
     return { text: `${k(reading.tokens)} of ${k(reading.window)}, ${reading.percent}%: ${tier}. Measured against ${against}.${showing}` }
   })
 
+  // Signs of life: each one keeps the pond moving for another idleMinutes,
+  // and starts it again once it has stopped. A model request inside a long
+  // turn counts, so the koi keep darting while Claude works.
+  on('prompt.change', ($, e, next) => (wake($), next(e)))
+  on('turn.start', ($, e, next) => (wake($), next(e)))
+  on('turn.step', async function* ($, e, next) {
+    wake($)
+    return yield* next(e)
+  })
+  on('ui.press', ($, e, next) => (wake($), next(e)))
+  on('ui.input', ($, e, next) => (wake($), next(e)))
+
   on('prompt.submit', ($, e, next) => {
+    wake($)
     if (!e.turnId) phase = 'working'
     return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {
+    wake($)
     const result = await next(e)
     if (e.agentId) return result
     await takeReading($)

@@ -53,6 +53,12 @@
         "dots"
       ],
       "default": "clear"
+    },
+    "idleMinutes": {
+      "type": "number",
+      "title": "Idle stop (minutes)",
+      "description": "Minutes after the last prompt, turn, model request, press or input before the pond stops moving and the fish stand still; the next one starts it again. 0 keeps it moving all session.",
+      "default": 5
     }
   }
 }

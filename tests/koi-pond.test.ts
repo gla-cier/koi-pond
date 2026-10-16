@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 
 const band = (props: Record<string, unknown>) =>
   ({ component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 8, bodyColumns: 120, ...props } }) as any
@@ -197,5 +197,30 @@ test('a tree drawn beneath the band keeps its place under the koi', async ($, on
   const ui = await $.ui.mount({ plugin: 'koi-pond', surface: 'terminal', ...band({}) })
   expect(await ui.find({ type: 'Raster', key: 'pond' } as any)).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /meter 42%/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the pond stops idleMinutes after the last sign of life, and the next one starts it again', { options: { idleMinutes: 0.05 } }, async ($, on) => {
+  // three seconds of quiet (0.05 min) stand in for the five minutes the default gives
+  const clock = mock.clock(on)
+  let paints = 0 // one $.ui.blit per tick while the pond is drawn; the test takes each one
+  on('ui.blit', () => (paints += 1, { value: {} }) as any)
+  on('ui.render', { component: 'AbovePrompt' }, emptyBand)
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('turn.start', (_, e) => ({ turnId: e.turnId }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'koi-pond', surface: 'terminal', ...band({}) })
+  const painted = async (ms: number) => {
+    const before = paints
+    await clock.advance(ms)
+    return paints - before
+  }
+  expect(await painted(1_000)).toBeGreaterThanOrEqual(9) // 10 a second while awake
+  await clock.advance(3_000)
+  expect(await painted(2_000)).toBe(0) // a still pond: the timer is gone
+  await $.turn.start({ text: 'hello', turnId: 't1' })
+  expect(await painted(1_000)).toBeGreaterThanOrEqual(9) // and back at full rate
+  await clock.advance(3_000)
+  expect(await painted(2_000)).toBe(0)
   await ui.unmount()
 })
