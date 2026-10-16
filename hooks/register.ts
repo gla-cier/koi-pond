@@ -116,7 +116,7 @@ export const register: Register = (on, options) => {
         $.ui.invalidate('ui.render')
       }
       if (!mounted || cols === 0) return
-      step(DT) // full rate asleep too: the moon shimmers, the dragonfly flies, a sleeper drifts
+      step(DT) // full rate asleep too: the moon shimmers, a sleeper visits it (in the tank, drifts), the dragonfly flies
       void repaint($)
     })
     return result
@@ -412,12 +412,18 @@ type PondKoi = {
 }
 type Pellet = { x: number; y: number; age: number }
 type Ripple = { x: number; y: number; age: number }
-type Drop = { x: number; y: number; age: number }
+type Drop = { x: number; y: number; age: number; hello?: boolean } // hello: the moon visitor's bubble, breaking the surface over the moon
 type Fly = { mode: 'away' | 'in' | 'perched' | 'out'; x: number; y: number; tx: number; ty: number; wait: number; th: number }
 
 // wet: how hard it is raining, eased 0..1; ct: the caustics' own clock
 const pond = { fish: [] as PondKoi[], pellets: [] as Pellet[], ripples: [] as Ripple[], drops: [] as Drop[], t: 0, rainAcc: 0, wet: 0, ct: 0 }
 const fly: Fly = { mode: 'away', x: -10, y: 4, tx: 0, ty: 0, wait: 4, th: 0 }
+// The moon visitor: on a sleeping night, now and then one koi slips out from
+// under its pad to the moon. Which koi (by index), how long it has been out, the
+// wait for the next; how silver it has gone (glow, from afar; contact, into the
+// moon); its breach and its five hello bubbles; and its way home (leaving,
+// turned, sinkT, straight, fade).
+const visit = { i: -1, t: 0, wait: 8, bubbled: false, glow: 0, bubbles: 0, bubT: 0, arrived: false, leaveAt: 0, stillT: 0, contact: 0, d: 1e9, leaving: false, leaveT: 0, lx: 0, ly: 0, turned: false, fade: 1, sinkT: 0, straight: false, straightT: 0, ex: 0, ey: 0, entered: false, inMoon: false, fullAt: false, bx: 0, by: 0, bw: 0 }
 // The order the pond fills as the band widens.
 const POND_ROSTER: TopVariety[] = ['kohaku', 'showa', 'tancho', 'shiro', 'ogon', 'hiutsuri']
 
@@ -531,7 +537,82 @@ function stepPond(dt: number) {
   // between; half blocks are coarser, so their clock runs slower to look as calm
   pond.wet += ((phase === 'working' ? 1 : 0) - pond.wet) * Math.min(1, dt * 0.8)
   pond.ct += dt * (draw === 'dots' ? 1 : 0.45) * (1 + 1.25 * pond.wet)
+  stepVisit(dt)
   stepFly(dt)
+}
+
+// The moon visitor's clock and light; swim steers it.
+function stepVisit(dt: number) {
+  if (speedFactor() > 0 || !pond.fish.length) {
+    visit.i = -1 // awake: the koi swim, nobody visits
+    visit.glow = 0
+    visit.contact = 0
+    visit.leaving = false
+    return
+  }
+  const vf = pond.fish[visit.i]
+  const [mx, my] = moonAt()
+  const vd = vf ? Math.hypot(mx - vf.x, my - vf.y) : 1e9
+  // a silver back from 28 dots out, growing as it comes; then from where the
+  // moon's glints end (about 1.8 of its radii out) its head eases the whole of
+  // it into moonlit white, full right at the rim of the moon itself
+  const e = vf ? Math.hypot((vf.x - mx) / 7.5, (vf.y - my) / 5) : 1e9
+  visit.inMoon = e < 1.8
+  const r = Math.max(0, Math.min(1, (1.8 - e) / 0.8))
+  const touch = r * r * (3 - 2 * r) // smooth in, smooth out
+  const close = Math.max(Math.max(0, Math.min(1, (28 - vd) / 14.5)) * 0.8, visit.inMoon ? 0.8 + 0.2 * touch : 0)
+  if (visit.leaving) {
+    // on its way home it keeps its full silver through the turn, the glide, the
+    // sink and the dart's turn; only once it has straightened out on its swim
+    // for the pad does it go back to its own dark, over about a second
+    if (visit.straight) visit.straightT += dt
+    const ft = !visit.straight || visit.straightT < 0.15 ? 1 : Math.max(0, 1 - (visit.straightT - 0.15) / 0.9)
+    visit.fade += (ft - visit.fade) * Math.min(1, dt * 6)
+  } else {
+    visit.contact += (touch - visit.contact) * Math.min(1, dt * 6)
+    visit.glow += (close - visit.glow) * Math.min(1, dt * 2.5) // silvering as it nears the moon
+  }
+  visit.d = vd
+  if (visit.i < 0) {
+    visit.wait -= dt
+    if (visit.wait <= 0) {
+      visit.i = Math.floor(rnd() * pond.fish.length)
+      visit.t = 0
+      visit.bubbled = false
+      visit.arrived = false
+      visit.glow = 0
+      visit.contact = 0
+      visit.leaving = false
+      visit.turned = false
+      visit.fade = 1
+      visit.sinkT = 0
+      visit.straight = false
+      visit.straightT = 0
+      visit.entered = false
+      visit.fullAt = false
+      visit.bubbles = 0
+      visit.stillT = 0
+    }
+  } else if ((visit.t += dt) > (visit.bubbled ? visit.leaveAt : 45)) { // time to get there from the farthest pad of a wide pond, stop and say hello
+    const f = pond.fish[visit.i]!
+    if (!visit.leaving) {
+      visit.leaving = true // first the turn for home, still lit
+      visit.leaveT = 0
+      visit.lx = f.x
+      visit.ly = f.y
+    } else {
+      visit.leaveT += dt
+      if (Math.hypot(f.x - visit.lx, f.y - visit.ly) >= 4 || visit.leaveT > 2.5) visit.turned = true // two braille cells' width (four dots) out of its float
+      if (visit.fade < 0.03 || visit.leaveT > 15) {
+        visit.i = -1 // dark now: the pad logic takes it the rest of the way
+        visit.leaving = false
+        visit.glow = 0
+        visit.contact = 0
+        visit.fade = 1
+        visit.wait = 14 + rnd() * 16
+      }
+    }
+  }
 }
 
 function swim(f: PondKoi, h: number) {
@@ -550,7 +631,79 @@ function swim(f: PondKoi, h: number) {
       }
     }
   }
-  if (factor === 0) {
+  if (factor === 0 && pond.fish[visit.i] === f && visit.leaving) {
+    // turning for home, still lit until it has swum two braille cells' width out
+    // of its float; then a glide, a sink, and a dart for its pad
+    const ps = padsFor()
+    const p = ps[f.bed % ps.length]!
+    let turn = Math.atan2(p[1] - f.y, p[0] - f.x) - f.th
+    while (turn > Math.PI) turn -= 2 * Math.PI
+    while (turn < -Math.PI) turn += 2 * Math.PI
+    if (!visit.turned) {
+      f.th += Math.max(-1.6 * h, Math.min(1.6 * h, turn)) // only partway round while lit
+      v = 5.5
+    } else {
+      // then a glide that slows as it sinks, the reflection closing over it,
+      // and only then does it pick up speed for its pad
+      visit.sinkT += h
+      const k = visit.sinkT
+      if (k > 0.8) f.depthTo = 0.7 // a beat of gliding at the surface, then down
+      if (k < 2.2) {
+        f.th += Math.max(-2 * h, Math.min(2 * h, turn))
+        v = 6.5 - 2.5 * (k / 2.2) // easing off as it glides out of the reflection and goes down
+      } else {
+        f.th += Math.max(-3 * h, Math.min(3 * h, turn))
+        v = 4 + 6 * Math.min(1, (k - 2.2) / 1.5) // and away
+        if (Math.abs(turn) < 0.25 || k > 4.5) visit.straight = true // set on its line for the pad (or long enough trying)
+      }
+    }
+  } else if (factor === 0 && pond.fish[visit.i] === f) {
+    // out from under its pad, slow, up to the surface and into the moon
+    const [mx, my] = moonAt()
+    f.depthTo = 0.05
+    const dm = Math.hypot(mx - f.x, my - f.y)
+    if (!visit.entered && dm < 17) {
+      // the moment it crosses into the reflection: its one glide carries it on
+      // across, to rest on the far side of the moon from where it came in
+      visit.entered = true
+      visit.ex = (mx - f.x) / dm
+      visit.ey = (my - f.y) / dm
+    }
+    const tx = visit.entered ? mx + visit.ex * 7.5 : mx
+    const ty = visit.entered ? my + visit.ey * 3.5 : my
+    const d = Math.hypot(tx - f.x, ty - f.y)
+    if (visit.contact > 0.97 && !visit.fullAt) {
+      visit.fullAt = true // fully lit here
+      visit.bx = f.x
+      visit.by = f.y
+      visit.bw = 0.45 * d // about halfway on to where it comes to rest
+    }
+    if (visit.fullAt && !visit.arrived && Math.hypot(f.x - visit.bx, f.y - visit.by) >= visit.bw) {
+      visit.arrived = true
+      pond.ripples.push({ x: mx, y: my, age: 0.15 }) // the moon trembles as it breaches, halfway between fully lit and at rest
+    }
+    let turn = Math.atan2(ty - f.y, tx - f.x) - f.th
+    while (turn > Math.PI) turn -= 2 * Math.PI
+    while (turn < -Math.PI) turn += 2 * Math.PI
+    if (d > 3 && visit.stillT === 0) {
+      f.th += Math.max(-2 * h, Math.min(2 * h, turn))
+      v = Math.min(7, 1.2 + d * 0.35) * Math.max(0.3, Math.cos(turn))
+    } else {
+      // at rest on the moon: glide to a stop, hold still a moment, then a string
+      // of bubbles, a hello to the moon, and only then home
+      visit.stillT += h
+      v = 0.9 * Math.max(0, 1 - visit.stillT / 1.6)
+      if (visit.stillT > 3.2 && visit.bubbles < 5 && (visit.bubT += h) > 0.5) {
+        visit.bubT = 0
+        visit.bubbles += 1
+        pond.drops.push({ x: f.x + Math.cos(f.th) * 1.2 + (rnd() - 0.5) * 1, y: f.y + Math.sin(f.th) * 1.2 + (rnd() - 0.5) * 0.8, age: 0, hello: true }) // at its mouth
+        if (visit.bubbles === 5) {
+          visit.bubbled = true
+          visit.leaveAt = visit.t + 1 // a beat after the last bubble, it turns for home
+        }
+      }
+    }
+  } else if (factor === 0) {
     f.depthTo = 0.7 // resting: sink, and swim to sleep under a pad
     // Koi share a pad two by two, side by side and facing opposite ways. The body
     // follows the head's wake, so a koi lines up behind the pad first, then swims
@@ -769,7 +922,7 @@ function paintPond(g: Grid) {
     for (let gy = Math.max(0, Math.floor((y0 - pad) / s)); gy <= Math.min(g.h - 1, Math.ceil((y1 + pad) / s)); gy += 1) {
       for (let gx = Math.max(0, Math.floor((x0 - pad) / s)); gx <= Math.min(g.w - 1, Math.ceil((x1 + pad) / s)); gx += 1) {
         const hit = topKoiAt(f, sp, (gx + 0.5) * s, (gy + 0.5) * s)
-        if (hit) put(g, gx, gy, hit[0], L_FISH + z, (z + 1) * 16 + hit[1])
+        if (hit) put(g, gx, gy, hit[0], pond.fish[visit.i] === f && (visit.leaving ? visit.fade > 0.5 : visit.inMoon) ? L_MOON + 1 : L_FISH + z, (z + 1) * 16 + hit[1]) // the visitor, at the surface, lies over the moon's reflection
       }
     }
   })
@@ -785,7 +938,7 @@ function paintPond(g: Grid) {
         let c = Math.abs(Math.sin(ang * 4)) < 0.18 ? COL.padDark : COL.pad // veins
         const bloom = 0.38 - 0.2 * night // at night the flower closes to a bud
         if (flower && (x + 0.35 * r) ** 2 + (y + 0.2 * r) ** 2 < (bloom * r) ** 2) c = night > 0.5 ? NIGHT_COL.bud : COL.flower
-        put(g, gx, gy, c, L_PAD, c === COL.flower || c === NIGHT_COL.bud ? 1001 : 1000)
+        put(g, gx, gy, c, L_PAD, c === COL.flower ? 1001 : 1000) // the closed bud keys as the leaf, so the moon's wash takes it with the leaf
       }
     }
   }
@@ -796,16 +949,15 @@ function paintPond(g: Grid) {
     for (let a = 0; a < 360; a += 4) {
       const x = r.x + rad * Math.cos((a * Math.PI) / 180)
       const y = r.y + rad * Math.sin((a * Math.PI) / 180)
-      const gx = Math.floor(x / s)
-      const gy = Math.floor(y / s)
-      if (gx >= 0 && gy >= 0 && gx < g.w && gy < g.h && g.layer[gy * g.w + gx] === L_MOON) put(g, gx, gy, c, L_RIPPLE, 3000) // rings cross the moon's reflection
-      else putEmpty(g, gx, gy, c, L_RIPPLE, 3000)
+      putEmpty(g, Math.floor(x / s), Math.floor(y / s), c, L_RIPPLE, 3000) // over the moon a ring shatters the reflection instead (see moon)
     }
   }
   for (const d of pond.drops) {
-    // a raindrop: a dot, then a small ring that widens and fades, on open water
+    // a raindrop: a dot, then a small ring that widens and fades, on open water;
+    // a visitor's hello bubble breaks the surface over the moon too, never over the koi
+    const drop = d.hello ? putOverMoon : putEmpty
     if (d.age < 0.15) {
-      putEmpty(g, Math.floor(d.x / s), Math.floor(d.y / s), NIGHT_COL.drop, L_RIPPLE, 3001)
+      drop(g, Math.floor(d.x / s), Math.floor(d.y / s), NIGHT_COL.drop, L_RIPPLE, 3001)
       continue
     }
     const c = mix(ground, COL.ripple, 0.9 - d.age)
@@ -813,7 +965,7 @@ function paintPond(g: Grid) {
     for (let a = 0; a < 360; a += s === 1 ? 20 : 30) {
       const x = d.x + rad * Math.cos((a * Math.PI) / 180)
       const y = d.y + rad * Math.sin((a * Math.PI) / 180) * 0.8
-      putEmpty(g, Math.floor(x / s), Math.floor(y / s), c, L_RIPPLE, 3001)
+      drop(g, Math.floor(x / s), Math.floor(y / s), c, L_RIPPLE, 3001)
     }
   }
   if (fly.mode !== 'away') dragonfly(g, s)
@@ -827,6 +979,7 @@ function paintPond(g: Grid) {
       g.col[i] = k === KEY_FLY || k === KEY_WING ? mix(c, ground, (1 - light) * 0.4) : mix(ground, mix(c, 0x1a2c4a, (1 - light) * 0.55), 0.25 + light * 0.75)
     }
   }
+  if (night > 0) pondMoonlight(g, s, night, order)
 }
 
 function feedPond() {
@@ -842,7 +995,7 @@ function feedPond() {
 
 // ---- the pond's weather: night, rain, caustics and a dragonfly ----------------------
 
-const NIGHT_COL = { bud: 0xc77d92, drop: 0x9cc7da, moon: 0xe9e6d2, glint: 0xb9c2c8, moonlit: 0xa8b8c8, daylight: 0x3f7488, wing: 0xd6e8ef }
+const NIGHT_COL = { bud: 0xc77d92, drop: 0x9cc7da, moon: 0xe9e6d2, glint: 0xb9c2c8, moonlit: 0xa8b8c8, daylight: 0x3f7488, wing: 0xd6e8ef, silver: 0xdce6f4, visitor: 0xf7faff }
 const KEY_CAUSTIC = 4100
 const KEY_MOON = 7700
 const KEY_GLINT = 7701
@@ -889,7 +1042,8 @@ function caustics(g: Grid, s: number, light: number, night: number) {
   }
 }
 
-// The moon on the water: a pale oval, broken into slivers by the ripples.
+// The moon on the water: a pale oval, broken into slivers by the ripples: a ring
+// that crosses it bends its edge and cuts gaps between slivers that settle back.
 function moon(g: Grid, s: number, night: number) {
   const [cx, cy] = moonAt()
   const rx = 7.5
@@ -900,7 +1054,9 @@ function moon(g: Grid, s: number, night: number) {
     for (let gx = Math.floor((cx - rx - 8) / s); gx <= Math.ceil((cx + rx + 8) / s); gx += 1) {
       const x = (gx + 0.5) * s
       const y = (gy + 0.5) * s
-      const u = (x + Math.sin(y * 1.3 + pond.t * 1.6) * 0.9 - cx) / rx
+      const st = stir(x, y)
+      if (st > 0.27 && Math.sin(y * 3.1 + x * 0.7 + pond.t * 5) > 0.2) continue // shattered, a gap between slivers
+      const u = (x + Math.sin(y * 1.3 + pond.t * 1.6) * (0.9 + 3.1 * st) - cx) / rx
       const v = (y - cy) / ry
       const rr = u * u + v * v
       if (rr < 1) put(g, gx, gy, rr < 0.45 ? bright : mix(bright, ground, 0.35), L_MOON, KEY_MOON)
@@ -910,9 +1066,22 @@ function moon(g: Grid, s: number, night: number) {
 }
 
 // Every 10 to 25 seconds a dragonfly darts in, perches on a pad, and darts off.
+// Dragonflies hunt by day and roost by dark: as dusk comes on it flies off the
+// nearer edge and stays away until the light comes back.
 function stepFly(dt: number) {
   const W = cols * 2
   const H = rows * 4
+  if (lightLevel() < 0.75) {
+    if (fly.mode === 'away') {
+      fly.wait = Math.max(fly.wait, 4) // back a few seconds after the light is
+      return
+    }
+    if (fly.mode !== 'out') {
+      fly.mode = 'out'
+      fly.tx = fly.x < W / 2 ? -10 : W + 10
+      fly.ty = fly.y
+    }
+  }
   if (fly.mode === 'away') {
     fly.wait -= dt
     if (fly.wait > 0) return
@@ -974,6 +1143,168 @@ function dragonfly(g: Grid, s: number) {
         const oy = cx * side * k + sy * (sweep * k - back)
         put(g, Math.floor((bx + ox) / s), Math.floor((by + oy) / s), wing, L_FLY, KEY_WING)
         if (s === 1) put(g, Math.floor(bx + ox - cx * 0.9), Math.floor(by + oy - sy * 0.9), wing, L_FLY, KEY_WING) // two dots deep, so a wing holds its cell
+      }
+    }
+  }
+}
+
+// How much the rings and drops stir the water at (x, y): 0 calm .. 1 a ring right here.
+function stir(x: number, y: number): number {
+  let a = 0
+  for (const r of pond.ripples) {
+    const off = Math.abs(Math.hypot(x - r.x, y - r.y) - (1 + r.age * 7))
+    if (off < 2.5) a += (1 - off / 2.5) * (1 - r.age / 1.6)
+  }
+  for (const d of pond.drops) {
+    if (d.age < 0.15) continue
+    const off = Math.abs(Math.hypot(x - d.x, (y - d.y) / 0.8) - (0.8 + d.age * 4.8))
+    if (off < 2) a += (1 - off / 2) * (0.9 - d.age)
+  }
+  return Math.min(1, a)
+}
+
+// A hello bubble's ring: over the moon's reflection and open water, under the
+// visitor (a layer above the moon) and the pads.
+function putOverMoon(g: Grid, x: number, y: number, c: number, layer: number, key: number) {
+  if (x < 0 || y < 0 || x >= g.w || y >= g.h || g.layer[y * g.w + x]! > L_MOON) return
+  put(g, x, y, c, layer, key)
+}
+
+// Moonlight, painted over the dimmed pond as the tank does it: only what is
+// already there, silvered, and with a key of its own, so where its dots are the
+// most in a braille cell, the cell goes silver whole, as the dragonfly takes its
+// cells. The visitor silvers (the other koi sleep under the pads, dark), rings
+// near the moon catch it, and each pad is washed from the moon's side.
+const SILVER_PART = 15 // a koi's own silver key, beside its body, fin and eye keys
+const KEY_RIM = 1002
+function pondMoonlight(g: Grid, s: number, night: number, order: PondKoi[]) {
+  const [mx, my] = moonAt()
+  const vk = pond.fish[visit.i]
+  const z = vk ? order.indexOf(vk) : -1
+  if (vk && z >= 0 && visit.glow > 0) {
+    // from dark to a soft silver back down its middle, widening as it comes
+    // into the moon until it is silver whole, fins and tail too
+    const sp = spine(vk)
+    const lo = (z + 1) * 16
+    const glow = visit.glow
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9
+    for (const p of sp) {
+      x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1])
+    }
+    const pad = vk.Wd + 4 // as wide as the koi is drawn: fin and tail tips included
+    for (let gy = Math.max(0, Math.floor((y0 - pad) / s)); gy <= Math.min(g.h - 1, Math.ceil((y1 + pad) / s)); gy += 1) {
+      for (let gx = Math.max(0, Math.floor((x0 - pad) / s)); gx <= Math.min(g.w - 1, Math.ceil((x1 + pad) / s)); gx += 1) {
+        const i = gy * g.w + gx
+        const part = g.key[i]! - lo
+        if (part < 0 || part >= 16 || g.col[i]! < 0) continue // not this koi on top
+        if ((visit.inMoon && visit.contact > 0.9) || visit.leaving) {
+          // nearly full in the moon: every dot of it, eye, fins and tail too, lit as
+          // one part, so braille's one colour a cell can never fall to an unlit
+          // flank and show a hole; fading to its own dark colours on the way home
+          g.col[i] = mix(g.col[i]!, mix(NIGHT_COL.silver, NIGHT_COL.visitor, visit.contact * visit.fade), (0.7 + 0.3 * visit.contact) * visit.fade)
+          g.key[i] = lo + SILVER_PART
+          continue
+        }
+        if (part === 9) continue // the eye
+        const lit = visit.contact
+        const fin = part === 5 || part === 6
+        if (fin && lit <= 0) continue
+        const [sv, n] = locate(sp, (gx + 0.5) * s, (gy + 0.5) * s)
+        if (fin || sv > 0.74) {
+          if (lit > 0) {
+            g.col[i] = mix(g.col[i]!, mix(NIGHT_COL.silver, NIGHT_COL.visitor, lit), Math.min(1, 0.85 * lit * glow + 0.15 * lit))
+            g.key[i] = lo + SILVER_PART
+          }
+          continue
+        }
+        if (sv < 0.05) continue
+        const u = Math.abs(n) / Math.max(0.6, halfWidth(sv, vk.Wd))
+        if (u > (s === 1 ? 0.6 : 0.7) + 0.9 * lit) continue // into the moon: every body dot, edges too, so no dim speckle
+        if (glow < 0.15) continue
+        g.col[i] = mix(g.col[i]!, mix(NIGHT_COL.silver, NIGHT_COL.visitor, lit), Math.min(1, 0.25 + 0.3 * glow + 0.45 * lit)) // softer than the moon until it is in it
+        g.key[i] = lo + SILVER_PART
+      }
+    }
+  }
+  if (vk && visit.contact > 0) {
+    // it parts the reflection: calm water round it, the rest of the moon a touch dimmer
+    const sp = spine(vk)
+    const gap = 1.8 * visit.contact * visit.fade // dots of calm water between the koi and the reflection
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9
+    for (const p of sp) {
+      x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1])
+    }
+    const pad = vk.Wd + 6
+    for (let gy = Math.max(0, Math.floor((y0 - pad) / s)); gy <= Math.min(g.h - 1, Math.ceil((y1 + pad) / s)); gy += 1) {
+      for (let gx = Math.max(0, Math.floor((x0 - pad) / s)); gx <= Math.min(g.w - 1, Math.ceil((x1 + pad) / s)); gx += 1) {
+        const i = gy * g.w + gx
+        const k = g.key[i]!
+        if (k !== KEY_MOON && k !== KEY_GLINT) continue // the reflection only
+        const [sv, n] = locate(sp, (gx + 0.5) * s, (gy + 0.5) * s)
+        const tt = Math.max(0, (sv - 0.74) / 0.26)
+        const half = sv > 0.74 ? 0.8 + 2.9 * tt ** 0.8 : halfWidth(Math.max(0, sv), vk.Wd) + (sv > 0.2 && sv < 0.36 ? 2.9 : 0) // body, tail fan, pectoral fins
+        if (sv < -0.08 || sv > 1.08 || Math.abs(n) - half > gap) {
+          g.col[i] = mix(g.col[i]!, ground, 0.2 * visit.contact)
+          continue
+        }
+        g.col[i] = NONE // parted: no moon dots in the koi's gaps or round its edge
+        g.layer[i] = -1
+        g.key[i] = 0
+      }
+    }
+  }
+  // the water never covers the visitor: braille shows a cell's top layer only, so
+  // a ring dot in a cell the koi shares would hide the koi's dots there; in any
+  // cell with the visitor in it, the rings give way
+  if (vk && (visit.inMoon || visit.leaving) && s === 1) {
+    for (let cy = 0; cy < rows; cy += 1) for (let cx = 0; cx < cols; cx += 1) {
+      let koi = false
+      for (let dy = 0; dy < 4 && !koi; dy += 1) for (let dx = 0; dx < 2; dx += 1) if (g.layer[(cy * 4 + dy) * g.w + cx * 2 + dx] === L_MOON + 1) koi = true
+      if (!koi) continue
+      for (let dy = 0; dy < 4; dy += 1) for (let dx = 0; dx < 2; dx += 1) {
+        const i = (cy * 4 + dy) * g.w + cx * 2 + dx
+        if (g.key[i] === 3000 || g.key[i] === 3001) { g.col[i] = NONE; g.layer[i] = -1; g.key[i] = 0 }
+      }
+    }
+  }
+  // moonlit rings: food rings, rises and raindrops catch the moon as they pass near it
+  for (let i = 0; i < g.col.length; i += 1) {
+    const k = g.key[i]!
+    if ((k !== 3000 && k !== 3001) || g.col[i]! < 0) continue
+    const x = ((i % g.w) + 0.5) * s
+    const y = (Math.floor(i / g.w) + 0.5) * s
+    const nm = Math.exp(-Math.hypot((x - mx) * 0.55, y - my) / 21)
+    g.col[i] = mix(g.col[i]!, NIGHT_COL.silver, Math.min(0.92, 1.8 * nm) * night)
+  }
+  // the pads: moonlight washed across each whole leaf from the moon's side, no rim
+  // and no unlit core: full at the edge toward the moon, fading evenly across the
+  // leaf to nothing a little past its middle; where it falls the notch is closed over
+  const light = lightLevel()
+  for (const [cx, cy, r] of padsFor()) {
+    const ax = mx - cx
+    const ay = my - cy
+    const al = Math.hypot(ax, ay) || 1
+    for (let gy = Math.floor((cy - r) / s); gy <= Math.ceil((cy + r) / s); gy += 1) {
+      for (let gx = Math.floor((cx - 1.1 * r) / s); gx <= Math.ceil((cx + 1.1 * r) / s); gx += 1) {
+        if (gx < 0 || gy < 0 || gx >= g.w || gy >= g.h) continue
+        const i = gy * g.w + gx
+        const x = (gx + 0.5) * s - cx
+        const y = (gy + 0.5) * s - cy
+        const rr = Math.sqrt((x / (1.1 * r)) ** 2 + (y / r) ** 2)
+        const ang = Math.atan2(y, x)
+        const across = (x * ax + y * ay) / (al * 1.1 * r) // -1 the far edge .. 1 the edge toward the moon
+        if (rr <= 1 && x > 0 && Math.abs(ang) < 0.32 && g.layer[i]! < L_PAD && across > -0.35) {
+          g.col[i] = mix(ground, mix(COL.pad, 0x1a2c4a, (1 - light) * 0.55), 0.25 + light * 0.75) // the leaf, dimmed as the night dims it
+          g.layer[i] = L_PAD
+          g.key[i] = 1000
+        }
+        if (g.key[i] !== 1000) continue // the leaf and its closed bud only: not a koi, ring or dragonfly over it
+        const fade = Math.max(0, Math.min(1, (across + 0.35) / 1.2)) ** 1.4
+        if (fade <= 0) continue
+        const glint = rr > 0.7 && Math.sin(ang * 3 - pond.t * 0.9) > 0.85 ? 0.08 : 0
+        const lit = 0.85 * fade + glint
+        g.col[i] = mix(g.col[i]!, NIGHT_COL.silver, Math.min(0.92, lit) * night)
+        if (lit > 0.3) g.key[i] = KEY_RIM // the faint end blends into the leaf, so the fade carries into braille
       }
     }
   }
