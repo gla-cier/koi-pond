@@ -1,7 +1,7 @@
 {
   "name": "koi-pond",
-  "version": "0.10.3",
-  "description": "Koi across the band above the prompt: a pond seen from above, or a tank seen from the side. Koi swim while you type, dart while Claude works, rest as the context window fills, and come to eat when a turn finishes (with a bloop).",
+  "version": "0.11.0",
+  "description": "Koi across the band above the prompt: a pond seen from above, or a tank seen from the side. Koi swim while you type and one comes to look where you're typing, dart while Claude works, rest as the context window fills, and come to eat when a turn finishes (with a bloop).",
   "author": {
     "name": "glacier"
   },
@@ -21,6 +21,12 @@
       "description": "Play a soft bloop when a turn finishes.",
       "default": true,
       "title": "Bloop on finished turns"
+    },
+    "caret": {
+      "type": "boolean",
+      "title": "Koi follow the caret (pond)",
+      "description": "A koi comes to look where you type: quick by day, lazy at dusk. From 110 columns the koi near the caret lean in. Each keystroke rings the water over it, and at night a sleeper near it stirs without waking.",
+      "default": true
     },
     "algae": {
       "type": "boolean",

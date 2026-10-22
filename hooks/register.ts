@@ -24,6 +24,8 @@
 // ui.render      -> draws the band; yields to a survey and to any other
 //                   plugin's band that has controls; one-line text fallback
 //                   where there is no Raster or the band is too short
+// prompt.edit    -> the pond follows the caret: a koi comes to look where you
+//                   type, koi near it lean in, keystrokes ring the water
 // context tiers  -> under 50%: cruising; 50-80%: slow; 80%+: the koi settle
 //                   and rest (time to /compact)
 
@@ -89,6 +91,7 @@ let algaeOn = false // opt-in: algae grows in the tank over the session
 let view: View = 'pond'
 let draw: Draw = 'pixels'
 let waterDots = false
+let caretKoi = true // userConfig `caret`: a koi comes to look where you type (pond)
 let ground = 0x16181c // what see-through fins and deep koi fade toward: the theme's background, roughly
 let phase: Phase = 'idle'
 let now = 0 // pond time in ms: the ticks so far, whatever their rate
@@ -154,6 +157,7 @@ export const register: Register = (on, options) => {
   view = options?.view === 'tank' ? 'tank' : 'pond'
   draw = options?.fish === 'pixels' ? 'pixels' : 'dots'
   waterDots = options?.water === 'dots'
+  caretKoi = options?.caret !== false
   const wanted = Number(options?.rows)
   rows = Number.isFinite(wanted) ? Math.max(MIN_ROWS, Math.min(MAX_ROWS, Math.round(wanted))) : 6
   const rate = Number(options?.fps)
@@ -231,6 +235,14 @@ export const register: Register = (on, options) => {
   // and starts it again once it has stopped. A model request inside a long
   // turn counts, so the koi keep darting while Claude works.
   on('prompt.change', ($, e, next) => (wake($), next(e)))
+
+  // Where you type: the caret in the box the edit or move leaves, as a band column.
+  on('prompt.edit', async ($, e, next) => {
+    wake($)
+    const box = await next(e)
+    if (caretKoi && view === 'pond' && cols > 0) caretAt(caretColumn(box.text, box.cursor), e.inputText !== '' || e.end > e.start)
+    return box
+  })
   on('turn.start', ($, e, next) => (wake($), setBusy($, true), next(e)))
   on('turn.step', async function* ($, e, next) {
     wake($)
@@ -507,6 +519,19 @@ const fly: Fly = { mode: 'away', x: -10, y: 4, tx: 0, ty: 0, wait: 4, th: 0 }
 // moon); its breach and its five hello bubbles; and its way home (leaving,
 // turned, sinkT, straight, fade).
 const visit = { i: -1, t: 0, wait: 8, bubbled: false, glow: 0, bubbles: 0, bubT: 0, arrived: false, leaveAt: 0, stillT: 0, contact: 0, d: 1e9, leaving: false, leaveT: 0, lx: 0, ly: 0, turned: false, fade: 1, sinkT: 0, straight: false, straightT: 0, ex: 0, ey: 0, entered: false, inMoon: false, fullAt: false, bx: 0, by: 0, bw: 0 }
+// The caret: where you type, as prompt.edit tells it. A koi comes to look
+// (quick by day, lazy at dusk, nobody asleep); from LEAN_MIN_COLS the koi within
+// LEAN_SPAN of the band around it lean in; each keystroke rings the water over
+// it, asleep too; asleep, now and then the sleeper nearest it stirs. x in dots;
+// t: seconds since the last edit or caret move; picked: the follower, by index.
+const CARET_LINGER = 1.5 // seconds the pull lasts after the last edit or move
+const LEAN_MIN_COLS = 110 // narrower, the window would be most of the pond
+const LEAN_SPAN = 0.3 // the lean's window, as a share of the band's width
+const PROMPT_LEFT = 2 // columns before the draft's first character: "> "
+const TWITCH_S = 1.1
+const caret = { x: 0, t: 99, picked: -1, tapT: 0 }
+// the sleeper that stirs: which koi, how long it has left, the rest before another
+const twitch = { i: -1, t: 0, cool: 0 }
 // The order the pond fills as the band widens.
 const POND_ROSTER: TopVariety[] = ['kohaku', 'showa', 'tancho', 'shiro', 'ogon', 'hiutsuri']
 
@@ -595,6 +620,11 @@ function straightTrail(f: PondKoi): [number, number][] {
 
 function stepPond(dt: number) {
   pond.t += dt
+  caret.t += dt
+  caret.tapT -= dt
+  twitch.t -= dt
+  twitch.cool -= dt
+  if (!typing()) caret.picked = -1
   const sub = 4
   for (let n = 0; n < sub; n += 1) {
     for (const f of pond.fish) swim(f, dt / sub)
@@ -807,6 +837,30 @@ function swim(f: PondKoi, h: number) {
       f.th += Math.max(-5 * h, Math.min(5 * h, turn))
       v = Math.min(28, 2 + d * 1.5) * Math.max(0.25, Math.cos(turn)) // quick, so a short night still finds them in bed
     }
+    if (twitch.t > 0 && pond.fish[twitch.i] === f) {
+      // a sleeper stirs at the typing without waking: a swish of the tail out
+      // from under its pad (see stirOf in spine) and a flick of the fins
+      f.phase += h * 9
+      f.flap += h * 10
+    }
+  } else if (!food && follows(f)) {
+    // come and look: swim to just above the caret, along the band's bottom
+    // edge, and hang there with the head tipped toward the text; creep along
+    // as the caret moves, and turn round when it goes back
+    f.uturn = 0
+    const tx = caret.x
+    const ty = H - 4.5
+    const gap = Math.hypot(tx - f.x, ty - f.y)
+    let turn = (gap > 4 ? Math.atan2(ty - f.y, tx - f.x) : Math.atan2(0.45, Math.cos(f.th) >= 0 ? 1 : -1)) - f.th
+    while (turn > Math.PI) turn -= 2 * Math.PI
+    while (turn < -Math.PI) turn += 2 * Math.PI
+    const quick = tierFor(shownPercent()).key === 'fresh' // quick by day, lazy at dusk
+    const rate = gap > 4 ? (quick ? 3.4 : 1.5) : 1.2
+    f.th += Math.max(-rate * h, Math.min(rate * h, turn))
+    const pace = Math.max(0.55, Math.min(1.6, factor))
+    v = gap > 4 ? Math.min(quick ? 20 : 11, 1.5 + gap * (quick ? 0.8 : 0.35)) * Math.max(0.3, Math.cos(turn)) * pace : gap * 0.6
+    f.dir = Math.cos(f.th) >= 0 ? 1 : -1
+    f.depthTo = Math.min(f.depthTo, 0.12) // up near the surface, to see
   } else if (f.uturn) {
     v *= 1.5 // a koi powers through a turn
     f.th += f.uturn * (v / 5) * h
@@ -832,6 +886,7 @@ function swim(f: PondKoi, h: number) {
       let vy = Math.sin(f.wander) * 0.45
       if (f.y < 6) vy += (6 - f.y) * 0.18
       if (f.y > H - 6) vy -= (f.y - (H - 6)) * 0.18
+      if (leans(f)) vy += (H - 9 - f.y) * 0.035 // near the caret: drift down toward the prompt
       for (const g of pond.fish) {
         // traffic sense: ease aside from a koi just ahead
         if (g === f) continue
@@ -849,7 +904,8 @@ function swim(f: PondKoi, h: number) {
     f.th += Math.max(-maxTurn, Math.min(maxTurn, d))
     if (!food) f.dir = Math.cos(f.th) > 0 ? 1 : -1
     const nearEdge = (f.dir < 0 && f.x < 16) || (f.dir > 0 && f.x > W - 16)
-    if (nearEdge || (!food && rnd() < (phase === 'working' ? 0.0012 : 0.0004))) {
+    const away = leans(f) && !food && Math.sign(caret.x - f.x) === -f.dir && Math.abs(caret.x - f.x) > 8 // swimming out of the window: likelier to turn back
+    if (nearEdge || (!food && rnd() < (away ? 0.006 : phase === 'working' ? 0.0012 : 0.0004))) {
       // a U-turn comes out a lane over, toward the side with room: a two-way road
       f.uturn = (f.y < H / 2 ? 1 : -1) * f.dir
       f.turned = 0
@@ -894,7 +950,7 @@ function spine(f: PondKoi): [number, number, number][] {
     const r = Math.min(1, (want - acc) / seg)
     pts.push([a[0] + (b[0] - a[0]) * r, a[1] + (b[1] - a[1]) * r, k / N])
   }
-  const swimming = speedFactor() > 0 ? 1 : 0.25
+  const swimming = speedFactor() > 0 ? 1 : 0.25 + stirOf(f) // a sleeper's wave is a quarter of a swimmer's, but for a stir
   return pts.map((p, k) => {
     const a = pts[Math.max(0, k - 1)]!
     const b = pts[Math.min(N, k + 1)]!
@@ -1074,6 +1130,81 @@ function feedPond() {
   for (let i = 0; i < 5; i += 1) {
     pond.pellets.push({ x: x + (rnd() - 0.5) * 10, y: Math.max(2, Math.min(H - 2, y + (rnd() - 0.5) * 6)), age: 0 })
   }
+}
+
+// ---- the pond and the caret --------------------------------------------------------
+
+const typing = () => caretKoi && caret.t < CARET_LINGER
+
+function follows(f: PondKoi): boolean {
+  return typing() && caret.picked >= 0 && pond.fish[caret.picked] === f
+}
+
+// the lean's window, in dots, or null when the band is too narrow, nobody
+// types, or the koi are asleep
+function leanWindow(): [number, number] | null {
+  if (!typing() || cols < LEAN_MIN_COLS || speedFactor() === 0) return null
+  const half = cols * LEAN_SPAN
+  return [caret.x - half, caret.x + half]
+}
+
+function leans(f: PondKoi): boolean {
+  const w = leanWindow()
+  return !!w && f.x >= w[0] && f.x <= w[1] && !follows(f)
+}
+
+// how much more a stirring sleeper's body waves, swelling and fading
+function stirOf(f: PondKoi): number {
+  return twitch.t > 0 && pond.fish[twitch.i] === f ? 1.2 * Math.sin((Math.PI * twitch.t) / TWITCH_S) : 0
+}
+
+// The caret is over band column `col`; typed: an edit, not just a move.
+function caretAt(col: number, typed: boolean) {
+  caret.x = Math.max(1, Math.min(cols * 2 - 1, col * 2 + 1))
+  const was = typing()
+  caret.t = 0
+  if (!was || caret.picked < 0) {
+    // the koi nearest the spot comes
+    let best = Infinity
+    pond.fish.forEach((f, i) => {
+      const d = Math.hypot(f.x - caret.x, f.y - (rows * 4 - 4.5))
+      if (d < best) {
+        best = d
+        caret.picked = i
+      }
+    })
+  }
+  if (!typed) return
+  if (speedFactor() === 0 && twitch.cool <= 0) {
+    // asleep: the sleeper nearest the caret stirs, if one is within the lean's reach
+    let best = cols * LEAN_SPAN
+    twitch.i = -1
+    pond.fish.forEach((f, i) => {
+      const d = Math.abs(f.x - caret.x)
+      if (d < best && i !== visit.i) {
+        best = d
+        twitch.i = i
+      }
+    })
+    if (twitch.i >= 0) {
+      twitch.t = TWITCH_S
+      twitch.cool = 3 + rnd() * 2 // now and then, not at every key
+      const f = pond.fish[twitch.i]!
+      pond.drops.push({ x: f.x + Math.cos(f.th) * 1.5, y: f.y + Math.sin(f.th) * 1.5, age: 0 }) // and one small bubble at its mouth
+    }
+  }
+  if (caret.tapT <= 0) {
+    caret.tapT = 0.22 // a fingertip on the water, four or five a second at most
+    pond.drops.push({ x: caret.x, y: rows * 4 - 1.5, age: 0 })
+  }
+}
+
+// The band column over the caret, the draft wrapping at the band's width
+// after PROMPT_LEFT: its place in its own line, wrapped.
+function caretColumn(text: string, at: number): number {
+  const wrap = Math.max(1, cols - PROMPT_LEFT)
+  const lineStart = text.lastIndexOf('\n', at - 1) + 1
+  return PROMPT_LEFT + ((at - lineStart) % wrap)
 }
 
 // ---- the pond's weather: night, rain, caustics and a dragonfly ----------------------

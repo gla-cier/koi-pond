@@ -295,3 +295,63 @@ test('workingFps defaults to 4 while a turn runs', { options: { fps: '60', idleM
   expect(paints).toBeGreaterThanOrEqual(3)
   await ui.unmount()
 })
+
+// The caret: prompt.edit as the composer raises it, the box's own answer beneath.
+const edit = (text: string, at: number, inputText: string) => ({ origin: { kind: 'composer' }, text, cursor: at, start: at, end: at, inputText }) as any
+const theBox = (on: any) => on('prompt.edit', (_: any, e: any) => ({ text: e.text.slice(0, e.start) + e.inputText + e.text.slice(e.end), cursor: e.start + e.inputText.length }))
+const litDots = (cells: number[][], cols: number, rows: number[], from: number, to: number, bright = 0) => {
+  let n = 0
+  for (const r of rows) for (let c = from; c <= to; c++) {
+    const [g, fg] = cells[r * cols + c]!
+    const lum = (((fg! >> 16) & 255) + ((fg! >> 8) & 255) + (fg! & 255)) / 3
+    if (g! > 0x2800 && g! <= 0x28ff && lum > bright) for (let b = g! - 0x2800; b; b >>= 1) n += b & 1
+  }
+  return n
+}
+
+test('typing passes through untouched: the box is what the editor made it', async ($, on) => {
+  theBox(on)
+  on('ui.render', { component: 'AbovePrompt' }, emptyBand)
+  const ui = await $.ui.mount({ plugin: 'koi-pond', surface: 'terminal', ...band({}) })
+  const box = (await $.prompt.edit(edit('fix th', 6, 'e'))) as any
+  expect(box.text).toBe('fix the')
+  expect(box.cursor).toBe(7)
+  await ui.unmount()
+})
+
+test('a koi comes to look where you type, by the bottom edge over the caret', { options: { idleMinutes: 0 } }, async ($, on) => {
+  const clock = mock.clock(on)
+  theBox(on)
+  on('ui.render', { component: 'AbovePrompt' }, emptyBand)
+  const ui = await $.ui.mount({ plugin: 'koi-pond', surface: 'terminal', ...band({}) })
+  let text = ''
+  for (const ch of 'the koi should come and look at what i am typing here, ok') {
+    await $.prompt.edit(edit(text, text.length, ch))
+    text += ch
+    await clock.advance(150)
+  }
+  const pond = (await ui.find({ type: 'Raster', key: 'pond' } as any)) as any
+  const col = 2 + text.length // "> " then the draft
+  // a koi's bright body in the bottom two rows, just behind the caret
+  expect(litDots(glyphs(pond), pond.props.columns, [4, 5], col - 14, col + 1, 150)).toBeGreaterThan(20)
+  await ui.unmount()
+})
+
+test('asleep, a keystroke still rings the water over the caret', { options: { idleMinutes: 0 } }, async ($, on) => {
+  const clock = mock.clock(on)
+  on('session.usage', () => ({ value: { startedAt: 0, rateLimits: [], context: { tokens: 270_000, window: 300_000, percent: 90 } } }) as any)
+  theBox(on)
+  on('ui.render', { component: 'AbovePrompt' }, emptyBand)
+  await $.command.run({ command: 'koi' } as any)
+  const ui = await $.ui.mount({ plugin: 'koi-pond', surface: 'terminal', ...band({}) })
+  await clock.advance(30_000) // every koi to bed
+  const ring = async () => {
+    const pond = (await ui.find({ type: 'Raster', key: 'pond' } as any)) as any
+    return litDots(glyphs(pond), pond.props.columns, [5], 1, 6)
+  }
+  const before = await ring()
+  await $.prompt.edit(edit('', 0, 'a'))
+  await clock.advance(250)
+  expect(await ring()).toBeGreaterThan(before)
+  await ui.unmount()
+})
