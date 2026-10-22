@@ -239,3 +239,42 @@ test('fps sets the tick: 10 a second paints about ten times in a second', { opti
   expect(paints).toBeLessThanOrEqual(11)
   await ui.unmount()
 })
+
+test('while a turn runs the rate is capped at 10, and the chosen rate comes back when it completes', { options: { fps: '60', idleMinutes: 0 } }, async ($, on) => {
+  const clock = mock.clock(on)
+  let paints = 0
+  on('ui.blit', () => (paints += 1, { value: {} }) as any)
+  on('ui.render', { component: 'AbovePrompt' }, emptyBand)
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('turn.start', (_, e) => ({ turnId: e.turnId }))
+  on('turn.complete', (_, e) => ({ text: e.answer }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'koi-pond', surface: 'terminal', ...band({}) })
+  const painted = async (ms: number) => {
+    const before = paints
+    await clock.advance(ms)
+    return paints - before
+  }
+  expect(await painted(1_000)).toBeGreaterThanOrEqual(50) // the chosen 60 while idle
+  await $.turn.start({ text: 'build it', turnId: 't1' })
+  expect(await painted(1_000)).toBeLessThanOrEqual(11) // capped at 10 while the turn runs
+  await $.turn.complete({ turnId: 't1', answer: 'done', reason: 'answer', durationMs: 1_000 } as any)
+  expect(await painted(1_000)).toBeGreaterThanOrEqual(50) // and back to 60
+  await ui.unmount()
+})
+
+test('cap off keeps the chosen rate through a turn', { options: { fps: '60', cap: 'off', idleMinutes: 0 } }, async ($, on) => {
+  const clock = mock.clock(on)
+  let paints = 0
+  on('ui.blit', () => (paints += 1, { value: {} }) as any)
+  on('ui.render', { component: 'AbovePrompt' }, emptyBand)
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('turn.start', (_, e) => ({ turnId: e.turnId }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'koi-pond', surface: 'terminal', ...band({}) })
+  await $.turn.start({ text: 'build it', turnId: 't1' })
+  paints = 0
+  await clock.advance(1_000)
+  expect(paints).toBeGreaterThanOrEqual(50)
+  await ui.unmount()
+})
