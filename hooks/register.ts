@@ -857,7 +857,7 @@ function swim(f: PondKoi, h: number) {
     const quick = tierFor(shownPercent()).key === 'fresh' // quick by day, lazy at dusk
     const rate = gap > 4 ? (quick ? 3.4 : 1.5) : 1.2
     f.th += Math.max(-rate * h, Math.min(rate * h, turn))
-    const pace = Math.max(0.55, Math.min(1.6, factor))
+    const pace = Math.max(1, Math.min(1.6, factor)) // dusk is lazy, not lazy and slowed too: it still plainly comes
     v = gap > 4 ? Math.min(quick ? 20 : 11, 1.5 + gap * (quick ? 0.8 : 0.35)) * Math.max(0.3, Math.cos(turn)) * pace : gap * 0.6
     f.dir = Math.cos(f.th) >= 0 ? 1 : -1
     f.depthTo = Math.min(f.depthTo, 0.12) // up near the surface, to see
