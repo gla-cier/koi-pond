@@ -34,7 +34,10 @@ import type { Register } from 'claude-code'
 // awake CPU scales with it (about 13% of a core a session at 4, 21-26% at 10;
 // 60 is for laughs, around a whole core). The surface shows about sixty frames
 // a second and folds blits between them, so 60 is as fast as it ever shows.
-const FPS_PRESETS = [2, 4, 6, 10, 30, 60] as const
+// The world is braille dots, so a frame only shows something new once a mover
+// has crossed a dot: cruising koi do 2-2.6 dots/s, working koi 4-6, a koi
+// rushing food up to 10, the dragonfly's dart 28. 28 is the functional max.
+const FPS_PRESETS = [2, 4, 6, 10, 28, 60] as const
 const DEFAULT_FPS = 4
 // While Claude works a turn can run for an hour and each model request keeps
 // the pond awake, so a high rate would burn the whole turn. workingFps
