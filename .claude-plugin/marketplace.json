@@ -1,0 +1,11 @@
+{
+  "name": "koi-pond",
+  "owner": { "name": "glacier" },
+  "plugins": [
+    {
+      "name": "koi-pond",
+      "source": "./",
+      "description": "Koi across the band above the prompt: a pond seen from above, or a tank seen from the side. Koi swim while you type, dart while Claude works, rest as the context window fills, and come to eat when a turn finishes (with a bloop)."
+    }
+  ]
+}
