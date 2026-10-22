@@ -1,6 +1,6 @@
 {
   "name": "koi-pond",
-  "version": "0.10.2",
+  "version": "0.10.3",
   "description": "Koi across the band above the prompt: a pond seen from above, or a tank seen from the side. Koi swim while you type, dart while Claude works, rest as the context window fills, and come to eat when a turn finishes (with a bloop).",
   "author": {
     "name": "glacier"
@@ -63,12 +63,13 @@
     "fps": {
       "type": "string",
       "title": "Frame rate",
-      "description": "Frames a second while the pond is awake. The koi swim at the same speed at any rate; a higher one is smoother and costs more CPU (about 13% of a core a session at 4, 21-26% at 10, a core at 60), so pair it with a shorter idle stop. 2: drowsy koi only. 4: every cruising koi position, the default. 6: working koi smooth. 10: the rush to food smooth. 28: the dragonfly's dart, the functional max (nothing moves finer than a braille dot, and nothing moves faster). 60: for laughs; the same picture as 28, around a whole core.",
+      "description": "Frames a second while the pond is awake. The koi swim at the same speed at any rate; a higher one is smoother and costs more CPU (about 13% of a core a session at 4, 21-26% at 10, a core at 60), so pair it with a shorter idle stop. 2: drowsy koi only. 4: every cruising koi position, the default. 6: working koi smooth. 10: the rush to food smooth. 14: the functional max in pixels (half blocks are two dots a sample, so every number halves). 28: the dragonfly's dart, the functional max in dots (nothing moves finer than a braille dot, and nothing moves faster). 60: for laughs; the same picture as 28, around a whole core.",
       "options": [
         "2",
         "4",
         "6",
         "10",
+        "14",
         "28",
         "60"
       ],
@@ -77,12 +78,13 @@
     "workingFps": {
       "type": "string",
       "title": "Rate while Claude works",
-      "description": "The most frames a second the pond runs at while a turn is running, since each model request keeps it awake and a long turn at a high rate would burn a core the whole way. The chosen frame rate comes back when the turn completes. same: no cap. The presets mean the same as under Frame rate; 28 is the functional max.",
+      "description": "The most frames a second the pond runs at while a turn is running, since each model request keeps it awake and a long turn at a high rate would burn a core the whole way. The chosen frame rate comes back when the turn completes. same: no cap. The presets mean the same as under Frame rate; 28 is the functional max in dots, 14 in pixels.",
       "options": [
         "2",
         "4",
         "6",
         "10",
+        "14",
         "28",
         "60",
         "same"
