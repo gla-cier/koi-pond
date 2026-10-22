@@ -63,12 +63,14 @@
     "fps": {
       "type": "string",
       "title": "Frame rate",
-      "description": "Frames a second while the pond is awake. The koi swim at the same speed at any rate; a higher one is smoother and costs more CPU (about 13% of a core a session at 4, 21-26% at 10), so pair it with a shorter idle stop.",
+      "description": "Frames a second while the pond is awake. The koi swim at the same speed at any rate; a higher one is smoother and costs more CPU (about 13% of a core a session at 4, 21-26% at 10), so pair it with a shorter idle stop. 60 is for laughs: silky, and around a whole core until the pond stops.",
       "options": [
         "2",
         "4",
         "6",
-        "10"
+        "10",
+        "30",
+        "60"
       ],
       "default": "4"
     }

@@ -31,8 +31,10 @@ import type { Register } from 'claude-code'
 
 // Frames a second (userConfig `fps`, one of FPS_PRESETS). Motion is in seconds,
 // so the rate only sets how smooth the pond looks, and what it costs: the
-// awake CPU scales with it (about 13% of a core a session at 4, 21-26% at 10).
-const FPS_PRESETS = [2, 4, 6, 10] as const
+// awake CPU scales with it (about 13% of a core a session at 4, 21-26% at 10;
+// 60 is for laughs, around a whole core). The surface shows about sixty frames
+// a second and folds blits between them, so 60 is as fast as it ever shows.
+const FPS_PRESETS = [2, 4, 6, 10, 30, 60] as const
 const DEFAULT_FPS = 4
 let tickMs = 1000 / DEFAULT_FPS
 const ticksFor = (ms: number) => Math.max(1, Math.round(ms / tickMs))
