@@ -15,9 +15,10 @@
 // prompt.submit  -> the koi speed up (Claude is working)
 // turn.complete  -> reads the context window; food and a ripple (pond) or
 //                   flakes (tank), and a soft bloop (userConfig `sound`)
-// a 250 ms ticker-> moves everything and repaints the Raster in place
+// a ticker       -> moves everything and repaints the Raster in place
 //                   ($.ui.blit), falling back to a band redraw when refused;
-//                   it stops idleMinutes (5) after the last prompt, turn,
+//                   fps (userConfig, default 4) sets how often; it stops
+//                   idleMinutes (5) after the last prompt, turn,
 //                   model request, press or input, leaving the fish still,
 //                   and the next one restarts it
 // ui.render      -> draws the band; yields to a survey and to any other
@@ -28,8 +29,13 @@
 
 import type { Register } from 'claude-code'
 
-const TICK_MS = 250 // 4 frames a second; motion is in seconds, so the rate only sets how smooth it looks
-const DT = TICK_MS / 1000
+// Frames a second (userConfig `fps`, one of FPS_PRESETS). Motion is in seconds,
+// so the rate only sets how smooth the pond looks, and what it costs: the
+// awake CPU scales with it (about 13% of a core a session at 4, 21-26% at 10).
+const FPS_PRESETS = [2, 4, 6, 10] as const
+const DEFAULT_FPS = 4
+let tickMs = 1000 / DEFAULT_FPS
+const ticksFor = (ms: number) => Math.max(1, Math.round(ms / tickMs))
 const MIN_ROWS = 4
 const MAX_ROWS = 8
 const DEFAULT = 0x01000000 // the terminal's own colour
@@ -76,10 +82,10 @@ let reading: Reading | null = null
 // /koi night and /koi dusk: the percent the drawing reads for a minute, until a
 // frame on the tank's clock; the reading itself stays true, so /koi still reports it
 let preview: { name: 'night' | 'dusk'; percent: number; until: number } | null = null
-const PREVIEW_FRAMES = 60_000 / TICK_MS // a minute of ticks
-const HAPPY_FRAMES = Math.round(2_500 / TICK_MS) // the koi come to eat for two and a half seconds
+const PREVIEW_MS = 60_000 // a preview lasts a minute
+const HAPPY_MS = 2_500 // the koi come to eat for two and a half seconds
 const DEFAULT_IDLE_MINUTES = 5 // how long the pond moves after the last sign of life
-let awakeTicks = (DEFAULT_IDLE_MINUTES * 60_000) / TICK_MS // 0: never stops
+let awakeTicks = ticksFor(DEFAULT_IDLE_MINUTES * 60_000) // 0: never stops
 let ticker: { cancel: () => void } | null = null
 let idleTicks = 0 // ticks since the last prompt, turn, step, press or input
 let cols = 0
@@ -87,13 +93,13 @@ let requestId: string | null = null
 let mounted = false
 let rnd = mulberry32(0x9e3779b9)
 
-// The ticker: moves everything and repaints, 4 times a second, until the
+// The ticker: moves everything and repaints, fps times a second, until the
 // session has been quiet for idleMinutes; then it cancels itself and the last
 // frame stays on screen (a still pond costs nothing). wake() restarts it.
 type Ticking = Parameters<typeof repaint>[0] & { clock: { every: (ms: number, fn: () => void) => { cancel: () => void } } }
 function startTicker($: Ticking) {
   ticker?.cancel()
-  ticker = $.clock.every(TICK_MS, () => {
+  ticker = $.clock.every(tickMs, () => {
     idleTicks += 1
     if (awakeTicks > 0 && idleTicks >= awakeTicks) {
       ticker?.cancel()
@@ -107,7 +113,7 @@ function startTicker($: Ticking) {
       $.ui.invalidate('ui.render')
     }
     if (!mounted || cols === 0) return
-    step(DT) // full rate asleep too: the moon shimmers, a sleeper visits it (in the tank, drifts), the dragonfly flies
+    step(tickMs / 1000) // full rate asleep too: the moon shimmers, a sleeper visits it (in the tank, drifts), the dragonfly flies
     void repaint($)
   })
 }
@@ -126,8 +132,10 @@ export const register: Register = (on, options) => {
   waterDots = options?.water === 'dots'
   const wanted = Number(options?.rows)
   rows = Number.isFinite(wanted) ? Math.max(MIN_ROWS, Math.min(MAX_ROWS, Math.round(wanted))) : 6
+  const fps = Number(options?.fps)
+  tickMs = 1000 / ((FPS_PRESETS as readonly number[]).includes(fps) ? fps : DEFAULT_FPS)
   const idle = Number(options?.idleMinutes)
-  awakeTicks = Number.isFinite(idle) && idle >= 0 ? Math.round((idle * 60_000) / TICK_MS) : (DEFAULT_IDLE_MINUTES * 60_000) / TICK_MS
+  awakeTicks = Number.isFinite(idle) && idle >= 0 ? Math.round((idle * 60_000) / tickMs) : ticksFor(DEFAULT_IDLE_MINUTES * 60_000)
 
   on('session.start', async ($, e, next) => {
     const result = await next(e)
@@ -163,13 +171,13 @@ export const register: Register = (on, options) => {
     wake($)
     const arg = String(e?.args ?? '').trim().toLowerCase()
     if (arg === 'night' || arg === 'dusk') {
-      preview = { name: arg, percent: arg === 'night' ? 90 : 65, until: frame + PREVIEW_FRAMES }
+      preview = { name: arg, percent: arg === 'night' ? 90 : 65, until: frame + ticksFor(PREVIEW_MS) }
       $.ui.invalidate('ui.render')
       return { text: arg === 'night' ? 'Night falls on the koi for a minute (a preview; the context is unchanged). /koi day ends it.' : 'Dusk on the koi for a minute (a preview; the context is unchanged). /koi day ends it.' }
     }
     if (arg === 'feed') {
       phase = 'happy'
-      happyUntil = frame + HAPPY_FRAMES
+      happyUntil = frame + ticksFor(HAPPY_MS)
       dropFood($)
       $.ui.invalidate('ui.render')
       return { text: cols > 0 ? 'Food drops in; the koi come to eat.' : 'No pond on screen to feed right now.' }
@@ -182,7 +190,7 @@ export const register: Register = (on, options) => {
     }
     if (arg) return { text: 'Usage: /koi (the reading), /koi feed (drop food), /koi night or /koi dusk (a minute\'s preview), /koi day (end it).' }
     await takeReading($)
-    const showing = preview ? ` Previewing ${preview.name} for ${Math.max(1, Math.ceil(((preview.until - frame) * TICK_MS) / 1000))}s more (/koi day ends it).` : ''
+    const showing = preview ? ` Previewing ${preview.name} for ${Math.max(1, Math.ceil(((preview.until - frame) * tickMs) / 1000))}s more (/koi day ends it).` : ''
     if (!reading) return { text: `No context reading yet.${showing}` }
     const k = (n: number) => `${Math.round(n / 1000)}k`
     const tier = tierFor(reading.percent).key
@@ -217,7 +225,7 @@ export const register: Register = (on, options) => {
       phase = 'idle'
     } else {
       phase = 'happy'
-      happyUntil = frame + HAPPY_FRAMES
+      happyUntil = frame + ticksFor(HAPPY_MS)
       dropFood($)
     }
     $.ui.invalidate('ui.render')

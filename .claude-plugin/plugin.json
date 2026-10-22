@@ -1,6 +1,6 @@
 {
   "name": "koi-pond",
-  "version": "0.8.3",
+  "version": "0.9.0",
   "description": "Koi across the band above the prompt: a pond seen from above, or a tank seen from the side. Koi swim while you type, dart while Claude works, rest as the context window fills, and come to eat when a turn finishes (with a bloop).",
   "author": {
     "name": "glacier"
@@ -59,6 +59,18 @@
       "title": "Idle stop (minutes)",
       "description": "Minutes after the last prompt, turn, model request, press or input before the pond stops moving and the fish stand still; the next one starts it again. 0 keeps it moving all session.",
       "default": 5
+    },
+    "fps": {
+      "type": "string",
+      "title": "Frame rate",
+      "description": "Frames a second while the pond is awake. The koi swim at the same speed at any rate; a higher one is smoother and costs more CPU (about 13% of a core a session at 4, 21-26% at 10), so pair it with a shorter idle stop.",
+      "options": [
+        "2",
+        "4",
+        "6",
+        "10"
+      ],
+      "default": "4"
     }
   }
 }

@@ -224,3 +224,18 @@ test('the pond stops idleMinutes after the last sign of life, and the next one s
   expect(await painted(2_000)).toBe(0)
   await ui.unmount()
 })
+
+test('fps sets the tick: 10 a second paints about ten times in a second', { options: { fps: '10', idleMinutes: 0 } }, async ($, on) => {
+  const clock = mock.clock(on)
+  let paints = 0
+  on('ui.blit', () => (paints += 1, { value: {} }) as any)
+  on('ui.render', { component: 'AbovePrompt' }, emptyBand)
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'koi-pond', surface: 'terminal', ...band({}) })
+  paints = 0
+  await clock.advance(1_000)
+  expect(paints).toBeGreaterThanOrEqual(9)
+  expect(paints).toBeLessThanOrEqual(11)
+  await ui.unmount()
+})
