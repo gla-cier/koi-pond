@@ -18,7 +18,7 @@
 // a ticker       -> moves everything and repaints the Raster in place
 //                   ($.ui.blit), falling back to a band redraw when refused;
 //                   fps (userConfig, default 4) sets how often; it stops
-//                   idleMinutes (5) after the last prompt, turn,
+//                   idleMinutes (3) after the last prompt, turn,
 //                   model request, press or input, leaving the fish still,
 //                   and the next one restarts it
 // ui.render      -> draws the band; yields to a survey and to any other
@@ -84,7 +84,7 @@ let reading: Reading | null = null
 let preview: { name: 'night' | 'dusk'; percent: number; until: number } | null = null
 const PREVIEW_MS = 60_000 // a preview lasts a minute
 const HAPPY_MS = 2_500 // the koi come to eat for two and a half seconds
-const DEFAULT_IDLE_MINUTES = 5 // how long the pond moves after the last sign of life
+const DEFAULT_IDLE_MINUTES = 3 // how long the pond moves after the last sign of life
 let awakeTicks = ticksFor(DEFAULT_IDLE_MINUTES * 60_000) // 0: never stops
 let ticker: { cancel: () => void } | null = null
 let idleTicks = 0 // ticks since the last prompt, turn, step, press or input
