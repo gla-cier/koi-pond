@@ -37,15 +37,16 @@ import type { Register } from 'claude-code'
 const FPS_PRESETS = [2, 4, 6, 10, 30, 60] as const
 const DEFAULT_FPS = 4
 // While Claude works a turn can run for an hour and each model request keeps
-// the pond awake, so a high rate would burn the whole turn. The cap
-// (userConfig `cap`, automatic by default) holds it to CAP_FPS until the turn
-// completes; the chosen rate comes back for the pond's own idle window.
-const CAP_FPS = 10
+// the pond awake, so a high rate would burn the whole turn. workingFps
+// (userConfig, one of the presets or 'same'; default 4) is the most the pond
+// runs at until the turn completes; the chosen rate comes back for the pond's
+// own idle window.
+const DEFAULT_WORKING_FPS = 4
 let fps = DEFAULT_FPS
-let capped = true
+let workingFps: number | null = DEFAULT_WORKING_FPS // null: same as fps
 let busy = false // a turn is running
 let tickMs = 1000 / DEFAULT_FPS
-const rateNow = () => (busy && capped ? Math.min(fps, CAP_FPS) : fps)
+const rateNow = () => (busy && workingFps !== null ? Math.min(fps, workingFps) : fps)
 const MIN_ROWS = 4
 const MAX_ROWS = 8
 const DEFAULT = 0x01000000 // the terminal's own colour
@@ -137,7 +138,7 @@ function wake($: Ticking) {
   if (!ticker) startTicker($)
 }
 
-// The turn began or ended: if the cap changes the rate, restart at the new one.
+// The turn began or ended: if that changes the rate, restart at the new one.
 function setBusy($: Ticking, on: boolean) {
   busy = on
   if (ticker && tickMs !== 1000 / rateNow()) startTicker($)
@@ -153,7 +154,9 @@ export const register: Register = (on, options) => {
   rows = Number.isFinite(wanted) ? Math.max(MIN_ROWS, Math.min(MAX_ROWS, Math.round(wanted))) : 6
   const rate = Number(options?.fps)
   fps = (FPS_PRESETS as readonly number[]).includes(rate) ? rate : DEFAULT_FPS
-  capped = options?.cap !== 'off'
+  const working = options?.workingFps
+  const workingRate = Number(working)
+  workingFps = working === 'same' ? null : (FPS_PRESETS as readonly number[]).includes(workingRate) ? workingRate : DEFAULT_WORKING_FPS
   tickMs = 1000 / rateNow()
   const idle = Number(options?.idleMinutes)
   awakeMs = Number.isFinite(idle) && idle >= 0 ? idle * 60_000 : DEFAULT_IDLE_MINUTES * 60_000

@@ -1,6 +1,6 @@
 {
   "name": "koi-pond",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "Koi across the band above the prompt: a pond seen from above, or a tank seen from the side. Koi swim while you type, dart while Claude works, rest as the context window fills, and come to eat when a turn finishes (with a bloop).",
   "author": {
     "name": "glacier"
@@ -74,15 +74,20 @@
       ],
       "default": "4"
     },
-    "cap": {
+    "workingFps": {
       "type": "string",
-      "title": "Cap while Claude works",
-      "description": "automatic: while a turn runs the pond holds to 10 frames a second at most, whatever the frame rate, since each model request keeps it awake and a long turn would burn a core the whole way; your chosen rate comes back when the turn completes. off: the chosen rate throughout.",
+      "title": "Rate while Claude works",
+      "description": "The most frames a second the pond runs at while a turn is running, since each model request keeps it awake and a long turn at a high rate would burn a core the whole way. The chosen frame rate comes back when the turn completes. same: no cap, the frame rate throughout.",
       "options": [
-        "automatic",
-        "off"
+        "2",
+        "4",
+        "6",
+        "10",
+        "30",
+        "60",
+        "same"
       ],
-      "default": "automatic"
+      "default": "4"
     }
   }
 }
