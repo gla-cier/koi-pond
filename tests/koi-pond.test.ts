@@ -160,7 +160,7 @@ const moonCore = (pond: any) => {
   return cells[Math.floor(rows * 0.42) * cols + Math.floor(cols * 0.64)]!
 }
 
-test('/koi night previews the night without touching the reading, and /koi day ends it', async ($, on) => {
+test('/koi night previews the night without touching the reading, and /koi live ends it', async ($, on) => {
   // a nearly empty context: only the preview can bring the night
   on('session.usage', () => ({ value: { startedAt: 0, rateLimits: [], context: { tokens: 3_000, window: 300_000, percent: 1 } } }) as any)
   on('ui.render', { component: 'AbovePrompt' }, emptyBand)
@@ -173,8 +173,8 @@ test('/koi night previews the night without touching the reading, and /koi day e
   const report = (await $.command.run({ command: 'koi' } as any)) as any
   expect(report.text).toMatch(/1%: fresh/)
   expect(report.text).toMatch(/Previewing night/)
-  const day = (await $.command.run({ command: 'koi', args: 'day' } as any)) as any
-  expect(day.text).toMatch(/night preview is over/)
+  const live = (await $.command.run({ command: 'koi', args: 'live' } as any)) as any
+  expect(live.text).toMatch(/night preview is over/)
   expect(moonCore(await ui.find({ type: 'Raster', key: 'pond' } as any))[0]).not.toBe(0x28ff)
   await ui.unmount()
 })
@@ -344,7 +344,7 @@ test('asleep, a keystroke still rings the water over the caret', { options: { id
   on('ui.render', { component: 'AbovePrompt' }, emptyBand)
   await $.command.run({ command: 'koi' } as any)
   const ui = await $.ui.mount({ plugin: 'koi-pond', surface: 'terminal', ...band({}) })
-  await clock.advance(30_000) // every koi to bed
+  await clock.advance(8_000) // the koi settle (30 s of pond clock nears the test's 5 s limit)
   const ring = async () => {
     const pond = (await ui.find({ type: 'Raster', key: 'pond' } as any)) as any
     return litDots(glyphs(pond), pond.props.columns, [5], 1, 6)
@@ -354,4 +354,16 @@ test('asleep, a keystroke still rings the water over the caret', { options: { id
   await clock.advance(250)
   expect(await ring()).toBeGreaterThan(before)
   await ui.unmount()
+})
+
+test('/koi day previews daylight in a full session, and the koi read it as fresh', async ($, on) => {
+  on('session.usage', () => ({ value: { startedAt: 0, rateLimits: [], context: { tokens: 228_000, window: 300_000, percent: 76 } } }) as any)
+  on('ui.render', { component: 'AbovePrompt' }, emptyBand)
+  const day = (await $.command.run({ command: 'koi', args: 'day' } as any)) as any
+  expect(day.text).toMatch(/Daylight on the koi for a minute/)
+  const report = (await $.command.run({ command: 'koi' } as any)) as any
+  expect(report.text).toMatch(/76%: drowsy/) // the reading stays true
+  expect(report.text).toMatch(/Previewing day/)
+  const live = (await $.command.run({ command: 'koi', args: 'live' } as any)) as any
+  expect(live.text).toMatch(/day preview is over/)
 })

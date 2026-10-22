@@ -99,7 +99,7 @@ let happyUntil = 0
 let reading: Reading | null = null
 // /koi night and /koi dusk: the percent the drawing reads for a minute, until a
 // frame on the tank's clock; the reading itself stays true, so /koi still reports it
-let preview: { name: 'night' | 'dusk'; percent: number; until: number } | null = null
+let preview: { name: 'night' | 'dusk' | 'day'; percent: number; until: number } | null = null
 const PREVIEW_MS = 60_000 // a preview lasts a minute
 const HAPPY_MS = 2_500 // the koi come to eat for two and a half seconds
 const DEFAULT_IDLE_MINUTES = 3 // how long the pond moves after the last sign of life
@@ -178,7 +178,7 @@ export const register: Register = (on, options) => {
     algaeT = 0 // a new session, a clean tank
     await takeReading($)
     try {
-      await $.command.register({ name: 'koi', description: 'How full the koi think the context is; /koi feed drops food in; /koi night or /koi dusk previews the dark for a minute, /koi day ends it' })
+      await $.command.register({ name: 'koi', description: 'How full the koi think the context is; /koi feed drops food in; /koi night, /koi dusk or /koi day previews that light for a minute, /koi live ends it' })
     } catch {
       // the band still works without the command
     }
@@ -203,10 +203,12 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'koi' }, async ($, e) => {
     wake($)
     const arg = String(e?.args ?? '').trim().toLowerCase()
-    if (arg === 'night' || arg === 'dusk') {
-      preview = { name: arg, percent: arg === 'night' ? 90 : 65, until: now + PREVIEW_MS }
+    if (arg === 'night' || arg === 'dusk' || arg === 'day') {
+      // as at 90%, 65% and 20%: day lets a full session see the koi awake and quick
+      preview = { name: arg, percent: arg === 'night' ? 90 : arg === 'dusk' ? 65 : 20, until: now + PREVIEW_MS }
       $.ui.invalidate('ui.render')
-      return { text: arg === 'night' ? 'Night falls on the koi for a minute (a preview; the context is unchanged). /koi day ends it.' : 'Dusk on the koi for a minute (a preview; the context is unchanged). /koi day ends it.' }
+      const what = arg === 'night' ? 'Night falls on the koi' : arg === 'dusk' ? 'Dusk on the koi' : 'Daylight on the koi'
+      return { text: `${what} for a minute (a preview; the context is unchanged). /koi live ends it.` }
     }
     if (arg === 'feed') {
       phase = 'happy'
@@ -215,15 +217,15 @@ export const register: Register = (on, options) => {
       $.ui.invalidate('ui.render')
       return { text: cols > 0 ? 'Food drops in; the koi come to eat.' : 'No pond on screen to feed right now.' }
     }
-    if (arg === 'day') {
+    if (arg === 'live') {
       const was = preview
       preview = null
       $.ui.invalidate('ui.render')
       return { text: was ? `The ${was.name} preview is over; the koi follow the context again.` : 'No preview running; the koi follow the context.' }
     }
-    if (arg) return { text: 'Usage: /koi (the reading), /koi feed (drop food), /koi night or /koi dusk (a minute\'s preview), /koi day (end it).' }
+    if (arg) return { text: 'Usage: /koi (the reading), /koi feed (drop food), /koi night, /koi dusk or /koi day (a minute\'s preview), /koi live (end it).' }
     await takeReading($)
-    const showing = preview ? ` Previewing ${preview.name} for ${Math.max(1, Math.ceil((preview.until - now) / 1000))}s more (/koi day ends it).` : ''
+    const showing = preview ? ` Previewing ${preview.name} for ${Math.max(1, Math.ceil((preview.until - now) / 1000))}s more (/koi live ends it).` : ''
     if (!reading) return { text: `No context reading yet.${showing}` }
     const k = (n: number) => `${Math.round(n / 1000)}k`
     const tier = tierFor(reading.percent).key

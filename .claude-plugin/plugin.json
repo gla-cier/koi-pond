@@ -1,6 +1,6 @@
 {
   "name": "koi-pond",
-  "version": "0.11.1",
+  "version": "0.12.0",
   "description": "Koi across the band above the prompt: a pond seen from above, or a tank seen from the side. Koi swim while you type and one comes to look where you're typing, dart while Claude works, rest as the context window fills, and come to eat when a turn finishes (with a bloop).",
   "author": {
     "name": "glacier"
