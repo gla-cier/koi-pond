@@ -19,7 +19,7 @@ Answer `y` to add the marketplace, then pick a scope (`user` keeps it across pro
 
 - `/koi` says how full the koi think the context is, and which window they measure against.
 - `/koi feed` drops food in.
-- `/koi night`, `/koi dusk` preview the dark for a minute without touching the reading; `/koi day` ends it.
+- `/koi night`, `/koi dusk`, `/koi day` preview that light for a minute (as at 90%, 65% and 20%) without touching the reading; `/koi live` ends it.
 
 ## Options
 
