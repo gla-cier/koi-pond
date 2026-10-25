@@ -42,7 +42,7 @@ The world is drawn in braille dots and nothing moves faster than the dragonfly's
 
 ## Terminal
 
-Braille and half-block glyphs vary by font. A monospace font with dense round braille dots and block elements drawn to the full line box looks best; Ghostty, iTerm2, kitty and WezTerm all render the band well.
+The terminal font must cover the whole Braille Patterns block (U+2800 to U+28FF) and the block elements. A font missing them falls back glyph by glyph to another face, and the koi come out as boxes, gaps or misaligned dots. Beyond coverage, glyphs vary by font: a monospace face with dense round braille dots and block elements drawn to the full line box looks best. Ghostty, iTerm2, kitty and WezTerm all render the band well.
 
 ## Development
 
