@@ -19,10 +19,10 @@ Answer `y` to add the marketplace, then pick a scope (`user` keeps it across pro
 
 Installing clones this repo into Claude Code's plugin cache and runs the pond from that copy, so new versions don't reach you on their own. Turn auto-update on once, right after installing:
 
-1. Run `/plugin`, open the **Marketplaces** tab, select `koi-pond`, choose **Enable auto-update**. It is off by default for marketplaces like this one.
+1. Run `/plugin` and move to the **Marketplaces** tab (not Plugins). Select `koi-pond` and choose **Enable auto-update**. It is off by default for marketplaces like this one.
 2. From then on Claude Code fetches new versions in the background shortly after a session starts and prints `Plugin updated: koi-pond · Run /reload-plugins to apply`. Run `/reload-plugins` when you see it, or just start your next session.
 
-Without auto-update, `/plugin update koi-pond@koi-pond` fetches the latest by hand, followed by the same `/reload-plugins`. On its own, `/reload-plugins` only re-reads what is already on disk.
+Without auto-update, `/plugin update koi-pond@koi-pond` fetches the latest by hand, followed by the same `/reload-plugins`. On its own, `/reload-plugins` only re-reads what is already on disk. The **Mark for update** item on the plugin's own page in the Plugins tab does not apply here, since the pond is delivered by its marketplace; update the marketplace instead.
 
 ## Commands
 
