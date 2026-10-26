@@ -41,7 +41,7 @@ import type { Register } from 'claude-code'
 // rushing food up to 10, the dragonfly's dart 28. 28 is the functional max;
 // in pixels (half blocks, two dots a sample) everything halves, so 14.
 const FPS_PRESETS = [2, 4, 6, 10, 14, 28, 60] as const
-const DEFAULT_FPS = 4
+const DEFAULT_FPS = 10
 // While Claude works a turn can run for an hour and each model request keeps
 // the pond awake, so a high rate would burn the whole turn. workingFps
 // (userConfig, one of the presets or 'same'; default 4) is the most the pond
@@ -102,7 +102,7 @@ let reading: Reading | null = null
 let preview: { name: 'night' | 'dusk' | 'day'; percent: number; until: number } | null = null
 const PREVIEW_MS = 60_000 // a preview lasts a minute
 const HAPPY_MS = 2_500 // the koi come to eat for two and a half seconds
-const DEFAULT_IDLE_MINUTES = 3 // how long the pond moves after the last sign of life
+const DEFAULT_IDLE_MINUTES = 1.5 // how long the pond moves after the last sign of life
 let awakeMs = DEFAULT_IDLE_MINUTES * 60_000 // 0: never stops
 let ticker: { cancel: () => void } | null = null
 let idleMs = 0 // pond time since the last prompt, turn, step, press or input

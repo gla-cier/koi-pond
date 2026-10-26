@@ -201,7 +201,7 @@ test('a tree drawn beneath the band keeps its place under the koi', async ($, on
 })
 
 test('the pond stops idleMinutes after the last sign of life, and the next one starts it again', { options: { idleMinutes: 0.05 } }, async ($, on) => {
-  // three seconds of quiet (0.05 min) stand in for the five minutes the default gives
+  // three seconds of quiet (0.05 min) stand in for the minute and a half the default gives
   const clock = mock.clock(on)
   let paints = 0 // one $.ui.blit per tick while the pond is drawn; the test takes each one
   on('ui.blit', () => (paints += 1, { value: {} }) as any)
@@ -215,7 +215,7 @@ test('the pond stops idleMinutes after the last sign of life, and the next one s
     await clock.advance(ms)
     return paints - before
   }
-  expect(await painted(1_000)).toBeGreaterThanOrEqual(3) // 4 a second while awake
+  expect(await painted(1_000)).toBeGreaterThanOrEqual(3) // 10 a second while awake
   await clock.advance(3_000)
   expect(await painted(2_000)).toBe(0) // a still pond: the timer is gone
   await $.turn.start({ text: 'hello', turnId: 't1' })

@@ -1,6 +1,6 @@
 {
   "name": "koi-pond",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "Koi across the band above the prompt: a pond seen from above, or a tank seen from the side. Koi swim while you type and one comes to look where you're typing, dart while Claude works, rest as the context window fills, and come to eat when a turn finishes (with a bloop).",
   "author": {
     "name": "glacier"
@@ -64,12 +64,12 @@
       "type": "number",
       "title": "Idle stop (minutes)",
       "description": "Minutes after the last prompt, turn, model request, press or input before the pond stops moving and the fish stand still; the next one starts it again. 0 keeps it moving all session. Fractions work: 0.5 is thirty seconds, 0.1 is six.",
-      "default": 3
+      "default": 1.5
     },
     "fps": {
       "type": "string",
       "title": "Frame rate",
-      "description": "Frames a second while the pond is awake. The koi swim at the same speed at any rate; a higher one is smoother and costs more CPU (about 13% of a core a session at 4, 21-26% at 10, a core at 60), so pair it with a shorter idle stop. 2: drowsy koi only. 4: every cruising koi position, the default. 6: working koi smooth. 10: the rush to food smooth. 14: the functional max in pixels (half blocks are two dots a sample, so every number halves). 28: the dragonfly's dart, the functional max in dots (nothing moves finer than a braille dot, and nothing moves faster). 60: for laughs; the same picture as 28, around a whole core.",
+      "description": "Frames a second while the pond is awake. The koi swim at the same speed at any rate; a higher one is smoother and costs more CPU (about 13% of a core a session at 4, 21-26% at 10, a core at 60), so pair it with a shorter idle stop. 2: drowsy koi only. 4: every cruising koi position. 6: working koi smooth. 10: the rush to food smooth, the default. 14: the functional max in pixels (half blocks are two dots a sample, so every number halves). 28: the dragonfly's dart, the functional max in dots (nothing moves finer than a braille dot, and nothing moves faster). 60: for laughs; the same picture as 28, around a whole core.",
       "options": [
         "2",
         "4",
@@ -79,7 +79,7 @@
         "28",
         "60"
       ],
-      "default": "4"
+      "default": "10"
     },
     "workingFps": {
       "type": "string",

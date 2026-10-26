@@ -45,12 +45,12 @@ Set them with `/plugin configure koi-pond`. Saving reloads the plugin on the spo
 
 The pond costs no tokens, but drawing it costs CPU. These three settings decide how much.
 
-- **`idleMinutes`** (default `3`). Minutes after the last sign of life (a prompt, a turn, a model request, a keypress) before the pond stops moving and the koi hold still. The next sign of life starts it again. `0` keeps it moving all session. Fractions work: `0.5` is thirty seconds, `0.1` is six.
-- **`fps`** (`2`, `4`, `6`, `10`, `14`, `28` or `60`, default `4`). Frames per second while the pond is awake. The koi swim at the same speed at any rate; a higher rate is smoother and costs more CPU, so pair a high one with a short idle stop. What each preset buys:
+- **`idleMinutes`** (default `1.5`). Minutes after the last sign of life (a prompt, a turn, a model request, a keypress) before the pond stops moving and the koi hold still. The next sign of life starts it again. `0` keeps it moving all session. Fractions work: `0.5` is thirty seconds, `0.1` is six.
+- **`fps`** (`2`, `4`, `6`, `10`, `14`, `28` or `60`, default `10`). Frames per second while the pond is awake. The koi swim at the same speed at any rate; a higher rate is smoother and costs more CPU, so pair a high one with a short idle stop. What each preset buys:
   - `2`: enough for drowsy koi only.
-  - `4`: catches every position of a cruising koi. The default.
+  - `4`: catches every position of a cruising koi.
   - `6`: the faster koi while Claude works look smooth.
-  - `10`: the rush to food looks smooth.
+  - `10`: the rush to food looks smooth. The default.
   - `14`: the functional maximum in `pixels` mode, where each sample is two dots tall so every speed halves.
   - `28`: the functional maximum in `dots` mode. Nothing moves finer than a braille dot and nothing moves faster than the dragonfly's 28 dots a second, so above this no two frames differ.
   - `60`: for laughs. The same picture as 28, for about a whole core.
