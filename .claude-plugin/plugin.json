@@ -1,7 +1,7 @@
 {
   "name": "koi-pond",
-  "version": "0.13.0",
-  "description": "Koi across the band above the prompt: a pond seen from above, or a tank seen from the side. Koi swim while you type and one comes to look where you're typing, dart while Claude works, rest as the context window fills, and come to eat when a turn finishes (with a bloop).",
+  "version": "0.13.1",
+  "description": "An interactive TUI-braille koi pond for your Claude Code instances: koi swim while you type, dart while Claude works, the pond shifts from day to night as the context window fills, and food drops in with a bloop when a turn finishes.",
   "author": {
     "name": "glacier"
   },
