@@ -17,28 +17,46 @@ Answer `y` to add the marketplace, then pick a scope (`user` keeps it across pro
 
 ## Commands
 
-- `/koi` says how full the koi think the context is, and which window they measure against.
-- `/koi feed` drops food in.
-- `/koi night`, `/koi dusk`, `/koi day` preview that light for a minute (as at 90%, 65% and 20%) without touching the reading; `/koi live` ends it.
+One slash command, `/koi`, with a few words after it.
+
+- **`/koi`**: the reading. Prints how many tokens the session has used out of the window the koi measure against, the percentage, and the koi's mood: `fresh` under 50%, `drowsy` from 50%, `asleep` from 80%. It also says which window that is: the auto-compact window when Claude Code reports one, otherwise the model's whole context. If a preview is running it says how many seconds are left.
+- **`/koi feed`**: drops food on the water (or flakes into the tank). The koi rush to it and eat. Purely cosmetic; nothing about the session changes.
+- **`/koi night`**, **`/koi dusk`**, **`/koi day`**: a one-minute preview of that light, as if the context were at 90%, 65% or 20%. The reading is untouched; this is for seeing the moon, the dusk colours, or a fresh pond when your session is already deep. The preview ends on its own after a minute.
+- **`/koi live`**: ends a preview early and returns the koi to the real reading.
 
 ## Options
 
-Set them with `/plugin configure koi-pond`.
+Set them with `/plugin configure koi-pond`. Saving reloads the plugin on the spot.
 
-| Option | Default | What it does |
-|---|---|---|
-| `view` | `pond` | `pond` from above, `tank` from the side. |
-| `fish` | `dots` | `dots`: braille, finer. `pixels`: half blocks, steadier markings. |
-| `rows` | `6` | Height of the band in rows, 4 to 8. |
-| `water` | `clear` | `dots` adds a sparse field of dim blue dots (pond). |
-| `sound` | on | A soft bloop when a turn finishes. |
-| `caret` | on | A koi comes to look where you type; each keystroke rings the water (pond). |
-| `algae` | off | Tank only: algae grows over the session and the snail grazes it. |
-| `idleMinutes` | `3` | Minutes after the last sign of life before the pond stops moving. `0` never stops. Fractions work. |
-| `fps` | `4` | Frames a second while awake: 2, 4, 6, 10, 14, 28 or 60. The koi swim at the same speed at any rate; higher is smoother and costs more CPU. 28 is the functional max in dots, 14 in pixels; 60 is for laughs. |
-| `workingFps` | `4` | The most frames a second while Claude is working a turn, or `same` for no cap. |
+### What you see
 
-The world is drawn in braille dots and nothing moves faster than the dragonfly's 28 dots a second, so above 28 fps no two frames differ. CPU per session: about 13% of a core at 4 fps, 21-26% at 10, around a whole core at 60, and nothing once the pond has stopped.
+- **`view`** (`pond` or `tank`, default `pond`). `pond` looks down on the water: koi with wakes, lily pads, food on the surface, rain rings while Claude works, a dragonfly by day, a moon at night. `tank` looks in through the glass from the side: gravel, weed, a stone, driftwood, a bubbler, a snail, and flakes that flutter as they sink.
+- **`fish`** (`dots` or `pixels`, default `dots`). `dots` draws everything in braille, the finest grid a terminal offers, with one colour per cell and a stippled look. `pixels` uses half-block characters: coarser, two colours per cell, so a koi's markings sit steady instead of shimmering. Try both; fonts differ.
+- **`rows`** (4 to 8, default `6`). Height of the band in terminal rows. More rows give the koi more water and more lanes; fewer leave more room for the conversation.
+- **`water`** (`clear` or `dots`, default `clear`). `clear` uses the terminal's own background as the water. `dots` scatters a sparse field of dim blue dots across the pond, which reads as water on very dark themes. Pond only.
+
+### What happens
+
+- **`sound`** (on or off, default on). A soft bloop when a turn finishes, as the koi come to eat. The sound is a 260 ms synthesized tone shipped with the plugin.
+- **`caret`** (on or off, default on). Pond only. A koi comes to look at the spot above where you are typing: quick by day, lazy at dusk. From 110 columns wide, the koi near the caret lean toward it. Each keystroke rings the water over it, and at night a sleeping koi near it stirs without waking.
+- **`algae`** (on or off, default off). Tank only. Algae slowly grows on the glass and the decor over a session and the snail grazes it. Fresh each session.
+
+### How hard it works
+
+The pond costs no tokens, but drawing it costs CPU. These three settings decide how much.
+
+- **`idleMinutes`** (default `3`). Minutes after the last sign of life (a prompt, a turn, a model request, a keypress) before the pond stops moving and the koi hold still. The next sign of life starts it again. `0` keeps it moving all session. Fractions work: `0.5` is thirty seconds, `0.1` is six.
+- **`fps`** (`2`, `4`, `6`, `10`, `14`, `28` or `60`, default `4`). Frames per second while the pond is awake. The koi swim at the same speed at any rate; a higher rate is smoother and costs more CPU, so pair a high one with a short idle stop. What each preset buys:
+  - `2`: enough for drowsy koi only.
+  - `4`: catches every position of a cruising koi. The default.
+  - `6`: the faster koi while Claude works look smooth.
+  - `10`: the rush to food looks smooth.
+  - `14`: the functional maximum in `pixels` mode, where each sample is two dots tall so every speed halves.
+  - `28`: the functional maximum in `dots` mode. Nothing moves finer than a braille dot and nothing moves faster than the dragonfly's 28 dots a second, so above this no two frames differ.
+  - `60`: for laughs. The same picture as 28, for about a whole core.
+- **`workingFps`** (the same presets, or `same`, default `4`). A ceiling on the frame rate while Claude is working a turn. Every model request keeps the pond awake, so a long turn at a high `fps` would burn a core the whole way; this caps it. Your chosen `fps` returns when the turn completes. `same` removes the cap.
+
+Rough CPU per session, pond view, eight rows: about 13% of a core at 4 fps, 21 to 26% at 10, around a whole core at 60, and nothing once the pond has stopped.
 
 ## Terminal
 
