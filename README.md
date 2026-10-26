@@ -50,5 +50,3 @@ The terminal font must cover the whole Braille Patterns block (U+2800 to U+28FF)
 claude plugin validate .
 claude plugin test .
 ```
-
-`idle-throttle.md` records the CPU work: the idle stop, the frame rate presets and the working-turn cap, with the measurements behind them.
