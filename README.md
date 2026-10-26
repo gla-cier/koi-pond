@@ -15,6 +15,15 @@ In a Claude Code session:
 
 Answer `y` to add the marketplace, then pick a scope (`user` keeps it across projects). The band needs a terminal at least 30 columns wide with 4 rows to spare above the prompt; elsewhere it draws one line of text.
 
+## Updating
+
+Installing clones this repo into Claude Code's plugin cache and runs the pond from that copy, so new versions here don't reach you on their own. Two ways to get them:
+
+- **Manual**: `/plugin update koi-pond@koi-pond`, then `/reload-plugins` (or a new session) to apply it.
+- **Automatic**: auto-update is off by default for marketplaces like this one. Turn it on once under `/plugin`, Marketplaces tab, select `koi-pond`, then **Enable auto-update**. After that Claude Code checks for a new version in the background shortly after a session starts and tells you when to run `/reload-plugins`.
+
+`/reload-plugins` alone only re-reads what is already on disk; it does not fetch.
+
 ## Commands
 
 One slash command, `/koi`, with a few words after it.
